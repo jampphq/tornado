@@ -210,8 +210,49 @@ def coroutine(func, replace_callback=True):
     """
     return _make_coroutine_wrapper(func, replace_callback=True)
 
+def cython_coroutine(func, replace_callback=True):
+    """Decorator for asynchronous generators.
 
-def _make_coroutine_wrapper(func, replace_callback):
+    Any generator that yields objects from this module must be wrapped
+    in either this decorator or `engine`.
+
+    Coroutines may "return" by raising the special exception
+    `Return(value) <Return>`.  In Python 3.3+, it is also possible for
+    the function to simply use the ``return value`` statement (prior to
+    Python 3.3 generators were not allowed to also return values).
+    In all versions of Python a coroutine that simply wishes to exit
+    early may use the ``return`` statement without a value.
+
+    Functions with this decorator return a `.Future`.  Additionally,
+    they may be called with a ``callback`` keyword argument, which
+    will be invoked with the future's result when it resolves.  If the
+    coroutine fails, the callback will not be run and an exception
+    will be raised into the surrounding `.StackContext`.  The
+    ``callback`` argument is not visible inside the decorated
+    function; it is handled by the decorator itself.
+
+    From the caller's perspective, ``@gen.coroutine`` is similar to
+    the combination of ``@return_future`` and ``@gen.engine``.
+
+    This version works with cythonized coroutines by assuming the
+    decorated function is a generator (instead of checking).
+    Use reuglar @gen.coroutine unless necessary.
+
+    .. warning::
+
+       When exceptions occur inside a coroutine, the exception
+       information will be stored in the `.Future` object. You must
+       examine the result of the `.Future` object, or the exception
+       may go unnoticed by your code. This means yielding the function
+       if called from another coroutine, using something like
+       `.IOLoop.run_sync` for top-level calls, or passing the `.Future`
+       to `.IOLoop.add_future`.
+
+    """
+    return _make_coroutine_wrapper(func, replace_callback=True, assume_generator=True)
+
+
+def _make_coroutine_wrapper(func, replace_callback, assume_generator=False):
     """The inner workings of ``@gen.coroutine`` and ``@gen.engine``.
 
     The two decorators differ in their treatment of the ``callback``
@@ -239,7 +280,7 @@ def _make_coroutine_wrapper(func, replace_callback):
             future.set_exc_info(sys.exc_info())
             return future
         else:
-            if isinstance(result, GeneratorType):
+            if isinstance(result, GeneratorType) or assume_generator:
                 # Inline the first iteration of Runner.run.  This lets us
                 # avoid the cost of creating a Runner when the coroutine
                 # never actually yields, which in turn allows us to
