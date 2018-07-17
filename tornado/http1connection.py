@@ -411,7 +411,7 @@ class HTTP1Connection(httputil.HTTPConnection):
             if chunk:
                 data += self._format_chunk(chunk)
             self._pending_write = self.stream.write(data)
-            self._pending_write.add_done_callback(self._on_write_complete)
+            future_add_done_callback(self._pending_write, self._on_write_complete)
         return future
 
     def _format_chunk(self, chunk):
@@ -449,7 +449,7 @@ class HTTP1Connection(httputil.HTTPConnection):
             else:
                 future = self._write_future = Future()
             self._pending_write = self.stream.write(self._format_chunk(chunk))
-            self._pending_write.add_done_callback(self._on_write_complete)
+            future_add_done_callback(self._pending_write, self._on_write_complete)
         return future
 
     def finish(self):
@@ -464,7 +464,7 @@ class HTTP1Connection(httputil.HTTPConnection):
         if self._chunking_output:
             if not self.stream.closed():
                 self._pending_write = self.stream.write(b"0\r\n\r\n")
-                self._pending_write.add_done_callback(self._on_write_complete)
+                future_add_done_callback(self._pending_write, self._on_write_complete)
         self._write_finished = True
         # If the app finished the request while we're still reading,
         # divert any remaining data away from the delegate and

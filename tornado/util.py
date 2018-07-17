@@ -23,6 +23,8 @@ PY3 = sys.version_info >= (3,)
 
 if PY3:
     xrange = range
+else:
+    xrange = __builtins__['xrange']
 
 # inspect.getargspec() raises DeprecationWarnings in Python 3.5.
 # The two functions have compatible interfaces for the parts we need.
