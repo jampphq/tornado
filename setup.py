@@ -123,13 +123,20 @@ if (platform.python_implementation() == 'CPython' and
         pass
     else:
         kwargs['ext_modules'].extend(cythonize([
-            Extension('tornado.http1connection', ['tornado/http1connection.py']),
-            Extension('tornado.httputil', ['tornado/httputil.py']),
+            Extension('tornado.http1connection', ['tornado/http1connection.py'],
+                depends=['tornado/concurrent.pxd',
+                         'tornado/escape.pxd',
+                         'tornado/httputil.pxd']),
+            Extension('tornado.httputil', ['tornado/httputil.py'],
+                depends=['tornado/httputil.pxd']),
             Extension('tornado.ioloop', ['tornado/ioloop.py']),
             Extension('tornado.iostream', ['tornado/iostream.py']),
-            Extension('tornado.concurrent', ['tornado/concurrent.py']),
+            Extension('tornado.concurrent', ['tornado/concurrent.py'],
+                depends=['tornado/concurrent.pxd']),
             Extension('tornado.gen', ['tornado/gen.py']),
             Extension('tornado.web', ['tornado/web.py']),
+            Extension('tornado.escape', ['tornado/escape.py'],
+                depends=['tornado/escape.pxd']),
             Extension('tornado.stack_context', ['tornado/stack_context.py']),
         ]))
 

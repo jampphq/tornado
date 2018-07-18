@@ -34,6 +34,10 @@ from tornado import stack_context
 from tornado.util import GzipDecompressor, PY3
 
 
+ReturnTrue = gen.Return(True)
+ReturnFalse = gen.Return(False)
+
+
 class _QuietException(Exception):
     def __init__(self):
         pass
@@ -154,21 +158,25 @@ class HTTP1Connection(httputil.HTTPConnection):
     @gen.coroutine
     def _read_message(self, delegate):
         need_delegate_close = False
+        params = self.params
         try:
             header_future = self.stream.read_until(
                 b"\r\n\r\n",
-                max_bytes=self.params.max_header_size)
-            if self.params.header_timeout is None:
-                header_data = yield header_future
+                max_bytes=params.max_header_size)
+            if params.header_timeout is None:
+                if header_future.done():
+                    header_data = header_future.result()
+                else:
+                    header_data = yield header_future
             else:
                 try:
                     header_data = yield gen.with_timeout(
-                        self.stream.io_loop.time() + self.params.header_timeout,
+                        self.stream.io_loop.time() + params.header_timeout,
                         header_future,
                         quiet_exceptions=iostream.StreamClosedError)
                 except gen.TimeoutError:
                     self.close()
-                    raise gen.Return(False)
+                    raise ReturnFalse
             start_line, headers = self._parse_headers(header_data)
             if self.is_client:
                 start_line = httputil.parse_response_start_line(start_line)
@@ -188,7 +196,7 @@ class HTTP1Connection(httputil.HTTPConnection):
             if self.stream is None:
                 # We've been detached.
                 need_delegate_close = False
-                raise gen.Return(False)
+                raise ReturnFalse
             skip_body = False
             if self.is_client:
                 if (self._request_start_line is not None and
@@ -219,7 +227,11 @@ class HTTP1Connection(httputil.HTTPConnection):
                     start_line.code if self.is_client else 0, headers, delegate)
                 if body_future is not None:
                     if self._body_timeout is None:
-                        yield body_future
+                        if body_future.done():
+                            # Check for exeptions
+                            body_future.result()
+                        else:
+                            yield body_future
                     else:
                         try:
                             yield gen.with_timeout(
@@ -230,7 +242,7 @@ class HTTP1Connection(httputil.HTTPConnection):
                             gen_log.info("Timeout reading body from %s",
                                          self.context)
                             self.stream.close()
-                            raise gen.Return(False)
+                            raise ReturnFalse
             self._read_finished = True
             if not self._write_finished or self.is_client:
                 need_delegate_close = False
@@ -247,21 +259,21 @@ class HTTP1Connection(httputil.HTTPConnection):
             if self.is_client and self._disconnect_on_finish:
                 self.close()
             if self.stream is None:
-                raise gen.Return(False)
+                raise ReturnFalse
         except httputil.HTTPInputError as e:
             gen_log.info("Malformed HTTP message from %s: %s",
                          self.context, e)
             if not self.is_client:
                 yield self.stream.write(b'HTTP/1.1 400 Bad Request\r\n\r\n')
             self.close()
-            raise gen.Return(False)
+            raise ReturnFalse
         finally:
             if need_delegate_close:
                 with _ExceptionLoggingContext(app_log):
                     delegate.on_connection_close()
             header_future = None
             self._clear_callbacks()
-        raise gen.Return(True)
+        raise ReturnTrue
 
     def _clear_callbacks(self):
         """Clears the callback attributes.
