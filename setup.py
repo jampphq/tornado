@@ -129,6 +129,8 @@ if (platform.python_implementation() == 'CPython' and
             Extension('tornado.iostream', ['tornado/iostream.py']),
             Extension('tornado.concurrent', ['tornado/concurrent.py']),
             Extension('tornado.gen', ['tornado/gen.py']),
+            Extension('tornado.web', ['tornado/web.py']),
+            Extension('tornado.stack_context', ['tornado/stack_context.py']),
         ]))
 
     if os.environ.get('TORNADO_EXTENSION') != '1':
