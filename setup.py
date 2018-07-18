@@ -117,6 +117,20 @@ if (platform.python_implementation() == 'CPython' and
                   sources=['tornado/speedups.c']),
     ]
 
+    try:
+        from Cython.Build import cythonize
+    except ImportError:
+        pass
+    else:
+        kwargs['ext_modules'].extend(cythonize([
+            Extension('tornado.http1connection', ['tornado/http1connection.py']),
+            Extension('tornado.httputil', ['tornado/httputil.py']),
+            Extension('tornado.ioloop', ['tornado/ioloop.py']),
+            Extension('tornado.iostream', ['tornado/iostream.py']),
+            Extension('tornado.concurrent', ['tornado/concurrent.py']),
+            Extension('tornado.gen', ['tornado/gen.py']),
+        ]))
+
     if os.environ.get('TORNADO_EXTENSION') != '1':
         # Unless the user has specified that the extension is mandatory,
         # fall back to the pure-python implementation on any build failure.
