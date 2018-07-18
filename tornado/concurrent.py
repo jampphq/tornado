@@ -342,6 +342,10 @@ class Future(object):
         if not self._done:
             raise Exception("DummyFuture does not support blocking for results")
 
+    def _call_callbacks(self, callbacks):
+        for cb in callbacks:
+            cb(self)
+
     def _set_done(self):
         self._done = True
         if self._callbacks:
