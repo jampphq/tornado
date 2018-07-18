@@ -151,19 +151,19 @@ class HTTP1Connection(httputil.HTTPConnection):
         Returns a `.Future` that resolves to None after the full response has
         been read.
         """
-        if self.params.decompress:
-            delegate = _GzipMessageDelegate(delegate, self.params.chunk_size)
+        params = self.params
+        if params.decompress:
+            delegate = _GzipMessageDelegate(delegate, params.chunk_size)
         return self._read_message(delegate)
 
     @gen.coroutine
     def _read_message(self, delegate):
         need_delegate_close = False
-        params = self.params
         try:
             header_future = self.stream.read_until(
                 b"\r\n\r\n",
-                max_bytes=params.max_header_size)
-            if params.header_timeout is None:
+                max_bytes=self.params.max_header_size)
+            if self.params.header_timeout is None:
                 if header_future.done():
                     header_data = header_future.result()
                 else:
@@ -171,7 +171,7 @@ class HTTP1Connection(httputil.HTTPConnection):
             else:
                 try:
                     header_data = yield gen.with_timeout(
-                        self.stream.io_loop.time() + params.header_timeout,
+                        self.stream.io_loop.time() + self.params.header_timeout,
                         header_future,
                         quiet_exceptions=iostream.StreamClosedError)
                 except gen.TimeoutError:
