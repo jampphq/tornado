@@ -155,8 +155,8 @@ class HTTP1Connection(httputil.HTTPConnection):
     def _read_message(self, delegate):
         need_delegate_close = False
         try:
-            header_future = self.stream.read_until_regex(
-                b"\r?\n\r?\n",
+            header_future = self.stream.read_until(
+                b"\r\n\r\n",
                 max_bytes=self.params.max_header_size)
             if self.params.header_timeout is None:
                 header_data = yield header_future
