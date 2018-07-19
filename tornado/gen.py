@@ -1126,13 +1126,14 @@ class Runner(object):
             return
         try:
             self.running = True
+            stack_context_state = stack_context._state
             while True:
                 future = self.future
                 if not future.done():
                     return
                 self.future = None
                 try:
-                    orig_stack_contexts = stack_context._state.contexts
+                    orig_stack_contexts = stack_context_state.contexts
                     exc_info = None
 
                     try:
@@ -1152,7 +1153,7 @@ class Runner(object):
                     else:
                         yielded = self.gen.send(value)
 
-                    if stack_context._state.contexts is not orig_stack_contexts:
+                    if stack_context_state.contexts is not orig_stack_contexts:
                         self.gen.throw(
                             stack_context.StackContextInconsistentError(
                                 'stack_context inconsistency (probably caused '
