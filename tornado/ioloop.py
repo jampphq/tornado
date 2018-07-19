@@ -1027,14 +1027,14 @@ class PollIOLoop(IOLoop):
                     callback = due_timeouts[i].callback
                     if callback is not None:
                         run_callback(callback)
-                for i in xrange(ndue_timeouts, ncallbacks):
-                    # Run residual callbacks
-                    run_callback(pop_callback())
                 for i in xrange(ncallbacks, ndue_timeouts):
                     # Run residual timeouts
                     callback = due_timeouts[i].callback
                     if callback is not None:
                         run_callback(callback)
+                for i in xrange(ndue_timeouts, ncallbacks):
+                    # Run residual callbacks
+                    run_callback(pop_callback())
                 del pop_callback, run_callback
 
                 # Closures may be holding on to a lot of memory, so allow
