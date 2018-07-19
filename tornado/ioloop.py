@@ -990,14 +990,10 @@ class PollIOLoop(IOLoop):
 
         try:
             while True:
-                # Prevent IO event starvation by delaying new callbacks
-                # to the next iteration of the event loop.
-                ncallbacks = len(self._callbacks)
-
                 # Add any timeouts that have come due to the callback list.
                 # Do not run anything until we have determined which ones
-                # are ready, so timeouts that call add_timeout cannot
-                # schedule anything in this iteration.
+                # are ready, so we can multiplex timeout and callback execution
+                # getting fairer scheduling and lower worst-case latencies
                 due_timeouts = []
                 if self._timeouts:
                     now = self.time()
@@ -1026,21 +1022,34 @@ class PollIOLoop(IOLoop):
                             break
                     del timeouts, heappop
 
+                ncallbacks = len(self._callbacks)
+                ndue_timeouts = len(due_timeouts)
                 pop_callback = self._callbacks.popleft
                 run_callback = self._run_callback
-                for timeout in due_timeouts:
-                    # Run timeouts
-                    callback = timeout.callback
+                for i in xrange(min(ncallbacks, ndue_timeouts)):
+                    # Multiplex callbacks and timeouts
+                    callback = due_timeouts[i].callback
                     if callback is not None:
                         run_callback(callback)
+                    run_callback(pop_callback())
+                for i in xrange(ncallbacks, ndue_timeouts):
+                    # Run residual timeouts
+                    callback = due_timeouts[i].callback
+                    if callback is not None:
+                        run_callback(callback)
+
+                # Adjust ncallbacks to run all residual callbacks now
+                # This runs any callbacks scheduled by timeout
+                # This won't starve I/O since only callbacks due in the
+                # previous loop can be scheduled before I/O gets a chance
+                ncallbacks = len(self._callbacks)
                 for i in xrange(ncallbacks):
-                    # Run callbacks
                     run_callback(pop_callback())
                 del pop_callback, run_callback
 
                 # Closures may be holding on to a lot of memory, so allow
                 # them to be freed before we go into our poll wait.
-                due_timeouts = timeout = callback = None
+                due_timeouts = callback = None
 
                 if self._callbacks:
                     # If any callbacks or timeouts called add_callback,
