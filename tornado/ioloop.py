@@ -1026,22 +1026,15 @@ class PollIOLoop(IOLoop):
                             break
                     del timeouts, heappop
 
-                ndue_timeouts = len(due_timeouts)
                 pop_callback = self._callbacks.popleft
                 run_callback = self._run_callback
-                for i in xrange(min(ncallbacks, ndue_timeouts)):
-                    # Multiplex callbacks and timeouts
-                    run_callback(pop_callback())
-                    callback = due_timeouts[i].callback
+                for timeout in due_timeouts:
+                    # Run timeouts
+                    callback = timeout.callback
                     if callback is not None:
                         run_callback(callback)
-                for i in xrange(ncallbacks, ndue_timeouts):
-                    # Run residual timeouts
-                    callback = due_timeouts[i].callback
-                    if callback is not None:
-                        run_callback(callback)
-                for i in xrange(ndue_timeouts, ncallbacks):
-                    # Run residual callbacks
+                for i in xrange(ncallbacks):
+                    # Run callbacks
                     run_callback(pop_callback())
                 del pop_callback, run_callback
 
