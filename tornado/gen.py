@@ -711,9 +711,15 @@ def _contains_yieldpoint(children):
     and `multi_future`.
     """
     if isinstance(children, dict):
-        return any(isinstance(i, YieldPoint) for i in children.values())
+        YieldPoint_ = YieldPoint
+        for i in children.values():
+            if isinstance(i, YieldPoint_):
+                return True
     if isinstance(children, list):
-        return any(isinstance(i, YieldPoint) for i in children)
+        YieldPoint_ = YieldPoint
+        for i in children:
+            if isinstance(i, YieldPoint_):
+                return True
     return False
 
 
