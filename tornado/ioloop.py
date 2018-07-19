@@ -55,8 +55,16 @@ from tornado.platform.auto import set_close_exec, Waker
 from tornado import stack_context
 from tornado.util import (
     PY3, Configurable, errno_from_exception, timedelta_to_seconds,
-    TimeoutError, unicode_type, import_object, xrange,
+    TimeoutError, unicode_type, import_object, xrange as _xrange,
 )
+
+if PY3:
+    try:
+        import cython
+        if not cython.compiled:
+            globals()['xrange'] = _xrange
+    except ImportError:
+        globals()['xrange'] = _xrange
 
 try:
     import signal
