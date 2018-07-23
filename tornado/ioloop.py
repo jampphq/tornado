@@ -797,13 +797,17 @@ class IOLoop(Configurable):
                     # result, which should just be ignored.
                     pass
                 else:
-                    self.add_future(ret, self._discard_future_result)
+                    future_add_done_callback(ret, self._discard_future_result)
         except Exception:
             self.handle_callback_exception(callback)
 
-    def _discard_future_result(self, future):
+    @staticmethod
+    def _discard_future_result(future):
         """Avoid unhandled-exception warnings from spawned coroutines."""
-        future.result()
+        try:
+            future.result()
+        except:
+            app_log.error("Exception in callback", exc_info=True)
 
     def handle_callback_exception(self, callback):
         """This method is called whenever a callback run by the `IOLoop`
