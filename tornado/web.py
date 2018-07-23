@@ -153,7 +153,7 @@ May be overridden by passing a ``min_version`` keyword argument.
 """
 
 
-class RequestHandler(object):
+class _RequestHandler(object):
     """Base class for HTTP request handlers.
 
     Subclasses must define at least one of the methods defined in the
@@ -167,7 +167,7 @@ class RequestHandler(object):
     _remove_control_chars_regex = re.compile(r"[\x00-\x08\x0e-\x1f]")
 
     def __init__(self, application, request, **kwargs):
-        super(RequestHandler, self).__init__()
+        super(_RequestHandler, self).__init__()
 
         self.application = application
         self.request = request
@@ -402,7 +402,7 @@ class RequestHandler(object):
             raise TypeError("Unsupported header value %r" % value)
         # If \n is allowed into the header, it is possible to inject
         # additional headers or split the request.
-        if RequestHandler._INVALID_HEADER_CHAR_RE.search(retval):
+        if _RequestHandler._INVALID_HEADER_CHAR_RE.search(retval):
             raise ValueError("Unsafe header value %r", retval)
         return retval
 
@@ -507,7 +507,7 @@ class RequestHandler(object):
             if isinstance(v, unicode_type):
                 # Get rid of any weird control chars (unless decoding gave
                 # us bytes, in which case leave it alone)
-                v = RequestHandler._remove_control_chars_regex.sub(" ", v)
+                v = _RequestHandler._remove_control_chars_regex.sub(" ", v)
             if strip:
                 v = v.strip()
             values.append(v)
@@ -910,12 +910,12 @@ class RequestHandler(object):
             while frame.f_code.co_filename == web_file:
                 frame = frame.f_back
             template_path = os.path.dirname(frame.f_code.co_filename)
-        with RequestHandler._template_loader_lock:
-            if template_path not in RequestHandler._template_loaders:
+        with _RequestHandler._template_loader_lock:
+            if template_path not in _RequestHandler._template_loaders:
                 loader = self.create_template_loader(template_path)
-                RequestHandler._template_loaders[template_path] = loader
+                _RequestHandler._template_loaders[template_path] = loader
             else:
-                loader = RequestHandler._template_loaders[template_path]
+                loader = _RequestHandler._template_loaders[template_path]
         t = loader.load(template_name)
         namespace = self.get_template_namespace()
         namespace.update(kwargs)
@@ -1709,6 +1709,11 @@ class RequestHandler(object):
                    "Content-Type", "Last-Modified"]
         for h in headers:
             self.clear_header(h)
+
+class RequestHandler(_RequestHandler):
+    # Non-cdef class that can be monkey-patched
+    # (gunicorn does this)
+    pass
 
 
 def asynchronous(method):
