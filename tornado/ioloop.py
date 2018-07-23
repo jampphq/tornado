@@ -96,9 +96,9 @@ except ImportError:
     ThreadPoolExecutor = None
 
 if PY3:
-    import _thread as thread
+    from _thread import get_ident
 else:
-    import thread
+    from thread import get_ident
 
 try:
     import asyncio
@@ -972,7 +972,7 @@ class PollIOLoop(IOLoop):
         old_current = IOLoop.current(instance=False)
         if old_current is not self:
             self.make_current()
-        self._thread_ident = thread.get_ident()
+        self._thread_ident = get_ident()
         self._running = True
 
         # signal.set_wakeup_fd closes a race condition in event loops:
@@ -1179,7 +1179,7 @@ class PollIOLoop(IOLoop):
         # Blindly insert into self._callbacks. This is safe even
         # from signal handlers because deque.append is atomic.
         self._callbacks.append(partial(wrap(callback), *args, **kwargs))
-        if thread.get_ident() != self._thread_ident:
+        if get_ident() != self._thread_ident:
             # This will write one byte but Waker.consume() reads many
             # at once, so it's ok to write even when not strictly
             # necessary.
