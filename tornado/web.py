@@ -2226,19 +2226,22 @@ class _HandlerDelegate(httputil.HTTPMessageDelegate):
         # If template cache is disabled (usually in the debug mode),
         # re-compile templates and reload static files on every
         # request so you don't need to restart to see changes
-        if not self.application.settings.get("compiled_template_cache", True):
+        application = self.application
+        settings = application.settings
+        if not settings.get("compiled_template_cache", True):
             with RequestHandler._template_loader_lock:
                 for loader in RequestHandler._template_loaders.values():
                     loader.reset()
-        if not self.application.settings.get('static_hash_cache', True):
+        if not settings.get('static_hash_cache', True):
             StaticFileHandler.reset()
 
-        self.handler = self.handler_class(self.application, self.request,
-                                          **self.handler_kwargs)
-        transforms = [t(self.request) for t in self.application.transforms]
+        request = self.request
+        self.handler = handler = self.handler_class(application, request,
+                                                    **self.handler_kwargs)
+        transforms = [t(request) for t in application.transforms]
 
         if self.stream_request_body:
-            self.handler._prepared_future = Future()
+            handler._prepared_future = Future()
         # Note that if an exception escapes handler._execute it will be
         # trapped in the Future it returns (which we are ignoring here,
         # leaving it to be logged when the Future is GC'd).
@@ -2246,12 +2249,12 @@ class _HandlerDelegate(httputil.HTTPMessageDelegate):
         # except handler, and we cannot easily access the IOLoop here to
         # call add_future (because of the requirement to remain compatible
         # with WSGI)
-        self.handler._execute(transforms, *self.path_args,
-                              **self.path_kwargs)
+        handler._execute(transforms, *self.path_args,
+                         **self.path_kwargs)
         # If we are streaming the request body, then execute() is finished
         # when the handler has prepared to receive the body.  If not,
         # it doesn't matter when execute() finishes (so we return None)
-        return self.handler._prepared_future
+        return handler._prepared_future
 
 
 class HTTPError(Exception):
