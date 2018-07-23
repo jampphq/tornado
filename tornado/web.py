@@ -179,19 +179,33 @@ class RequestHandler(object):
         self._headers = None  # type: httputil.HTTPHeaders
         self.path_args = None
         self.path_kwargs = None
-        self.ui = ObjectDict((n, self._ui_method(m)) for n, m in
-                             application.ui_methods.items())
-        # UIModules are available as both `modules` and `_tt_modules` in the
-        # template namespace.  Historically only `modules` was available
-        # but could be clobbered by user additions to the namespace.
-        # The template {% module %} directive looks in `_tt_modules` to avoid
-        # possible conflicts.
-        self.ui["_tt_modules"] = _UIModuleNamespace(self,
-                                                    application.ui_modules)
-        self.ui["modules"] = self.ui["_tt_modules"]
         self.clear()
         self.request.connection.set_close_callback(self.on_connection_close)
         self.initialize(**kwargs)
+
+    @property
+    def ui(self):
+        if self._ui is None:
+            # Lazy initialize ui namespace
+            self._ui = ObjectDict((n, self._ui_method(m)) for n, m in
+                                 self.application.ui_methods.items())
+            # UIModules are available as both `modules` and `_tt_modules` in the
+            # template namespace.  Historically only `modules` was available
+            # but could be clobbered by user additions to the namespace.
+            # The template {% module %} directive looks in `_tt_modules` to avoid
+            # possible conflicts.
+            self._ui["_tt_modules"] = _UIModuleNamespace(self,
+                                                        self.application.ui_modules)
+            self._ui["modules"] = self._ui["_tt_modules"]
+        return self._ui
+
+    @ui.setter
+    def ui(self, value):
+        self._ui = value
+
+    @ui.deleter
+    def ui(self):
+        self._ui = None
 
     def initialize(self):
         """Hook for subclass initialization. Called for each request.
@@ -294,6 +308,7 @@ class RequestHandler(object):
             "Date": httputil.format_timestamp(time.time()),
         })
         self.set_default_headers()
+        self._ui = None
         self._write_buffer = []
         self._status_code = 200
         self._reason = httputil.responses[200]
@@ -1039,7 +1054,9 @@ class RequestHandler(object):
                 assert not self._write_buffer, "Cannot send body with %s" % self._status_code
                 self._clear_headers_for_304()
             elif "Content-Length" not in self._headers:
-                content_length = sum(len(part) for part in self._write_buffer)
+                content_length = 0
+                for part in self._write_buffer:
+                    content_length += len(part)
                 self.set_header("Content-Length", content_length)
 
         if hasattr(self.request, "connection"):
