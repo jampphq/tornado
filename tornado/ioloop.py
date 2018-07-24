@@ -1203,7 +1203,7 @@ class _Timeout(object):
     __slots__ = ['deadline', 'callback', 'seqno']
 
     def __init__(self, deadline, callback, io_loop):
-        if not isinstance(deadline, Real):
+        if not isinstance(deadline, (float, Real)):
             raise TypeError("Unsupported deadline %r" % deadline)
         self.deadline = deadline
         self.seqno = next(io_loop._timeout_counter)
