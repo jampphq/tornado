@@ -55,7 +55,7 @@ from tornado.platform.auto import set_close_exec, Waker
 from tornado import stack_context
 from tornado.util import (
     PY3, Configurable, errno_from_exception, timedelta_to_seconds,
-    TimeoutError, unicode_type, import_object,
+    TimeoutError, unicode_type, import_object, xrange,
 )
 
 try:
@@ -993,17 +993,7 @@ class PollIOLoop(IOLoop):
                 due_timeouts = []
                 if self._timeouts:
                     now = self.time()
-                    while self._timeouts:
-                        if self._timeouts[0].callback is None:
-                            # The timeout was cancelled.  Note that the
-                            # cancellation check is repeated below for timeouts
-                            # that are cancelled by another timeout or callback.
-                            heapq.heappop(self._timeouts)
-                            self._cancellations -= 1
-                        elif self._timeouts[0].deadline <= now:
-                            due_timeouts.append(heapq.heappop(self._timeouts))
-                        else:
-                            break
+
                     if (self._cancellations > 512 and
                             self._cancellations > (len(self._timeouts) >> 1)):
                         # Clean up the timeout queue when it gets large and it's
@@ -1013,14 +1003,43 @@ class PollIOLoop(IOLoop):
                                           if x.callback is not None]
                         heapq.heapify(self._timeouts)
 
-                for i in range(ncallbacks):
-                    self._run_callback(self._callbacks.popleft())
-                for timeout in due_timeouts:
-                    if timeout.callback is not None:
-                        self._run_callback(timeout.callback)
+                    timeouts = self._timeouts
+                    heappop = heapq.heappop
+                    while timeouts:
+                        if timeouts[0].callback is None:
+                            # The timeout was cancelled.  Note that the
+                            # cancellation check is repeated below for timeouts
+                            # that are cancelled by another timeout or callback.
+                            heappop(timeouts)
+                            self._cancellations -= 1
+                        elif timeouts[0].deadline <= now:
+                            due_timeouts.append(heappop(timeouts))
+                        else:
+                            break
+                    del timeouts, heappop
+
+                ndue_timeouts = len(due_timeouts)
+                pop_callback = self._callbacks.popleft
+                run_callback = self._run_callback
+                for i in xrange(min(ncallbacks, ndue_timeouts)):
+                    # Multiplex callbacks and timeouts
+                    run_callback(pop_callback())
+                    callback = due_timeouts[i].callback
+                    if callback is not None:
+                        run_callback(callback)
+                for i in xrange(ncallbacks, ndue_timeouts):
+                    # Run residual timeouts
+                    callback = due_timeouts[i].callback
+                    if callback is not None:
+                        run_callback(callback)
+                for i in xrange(ndue_timeouts, ncallbacks):
+                    # Run residual callbacks
+                    run_callback(pop_callback())
+                del pop_callback, run_callback
+
                 # Closures may be holding on to a lot of memory, so allow
                 # them to be freed before we go into our poll wait.
-                due_timeouts = timeout = None
+                due_timeouts = timeout = callback = None
 
                 if self._callbacks:
                     # If any callbacks or timeouts called add_callback,

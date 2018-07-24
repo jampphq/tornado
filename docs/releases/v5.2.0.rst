@@ -1,0 +1,15 @@
+What's new in Tornado 5.2
+=========================
+
+Unreleased
+----------
+
+IOLoop optimizations
+~~~~~~~~~~~~~~~~~~~~
+
+IOLoop optimizations to reduce latency. Reduced the amount of roundtrips
+through the IOLoop required to finish a request by performing some
+callbacks synchronously. In particular, future done callbacks are usually
+safe to perform synchronously since that's what most Future implementations
+do anyway. Improved the fairness of the IOLoop schedule regarding timeouts,
+to reduce the maximum request latency when under constant pressure.

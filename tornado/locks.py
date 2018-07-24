@@ -210,7 +210,11 @@ class Event(object):
         if not self._value:
             self._value = True
 
+            ndone = []
             for fut in self._waiters:
+                if not fut.done():
+                    ndone.append(fut)
+            for fut in ndone:
                 if not fut.done():
                     fut.set_result(None)
 

@@ -342,14 +342,29 @@ class Future(object):
         if not self._done:
             raise Exception("DummyFuture does not support blocking for results")
 
+    def _call_callbacks(self, callbacks):
+        for cb in callbacks:
+            cb(self)
+
     def _set_done(self):
         self._done = True
         if self._callbacks:
-            from tornado.ioloop import IOLoop
-            loop = IOLoop.current()
-            for cb in self._callbacks:
-                loop.add_callback(cb, self)
+            callbacks = self._callbacks
             self._callbacks = None
+
+            # Invoke non-wrapped callbacks immediately
+            # Invoke wrapped ones in the IOLoop
+            wrapped_callbacks = []
+            for cb in callbacks:
+                if not hasattr(cb, '_wrapped'):
+                    cb(self)
+                else:
+                    wrapped_callbacks.append(cb)
+
+            if wrapped_callbacks:
+                from tornado.ioloop import IOLoop
+                IOLoop.current().add_callback(
+                    self._call_callbacks, wrapped_callbacks)
 
     # On Python 3.3 or older, objects with a destructor part of a reference
     # cycle are never destroyed. It's no longer the case on Python 3.4 thanks to

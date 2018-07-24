@@ -212,7 +212,7 @@ class HTTPHeaders(collections.MutableMapping):
 
         """
         h = cls()
-        for line in _CRLF_RE.split(headers):
+        for line in headers.splitlines():
             if line:
                 h.parse_line(line)
         return h

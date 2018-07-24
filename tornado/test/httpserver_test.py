@@ -243,13 +243,6 @@ class HTTPConnectionTest(AsyncHTTPTestCase):
         self.assertEqual(u"\u00f3", data["filename"])
         self.assertEqual(u"\u00fa", data["filebody"])
 
-    def test_newlines(self):
-        # We support both CRLF and bare LF as line separators.
-        for newline in (b"\r\n", b"\n"):
-            response = self.raw_fetch([b"GET /hello HTTP/1.0"], b"",
-                                      newline=newline)
-            self.assertEqual(response, b'Hello world')
-
     @gen_test
     def test_100_continue(self):
         # Run through a 100-continue interaction by hand:

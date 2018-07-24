@@ -344,18 +344,6 @@ Foo: even
                                     newline, encoding)
                     raise
 
-    def test_optional_cr(self):
-        # Both CRLF and LF should be accepted as separators. CR should not be
-        # part of the data when followed by LF, but it is a normal char
-        # otherwise (or should bare CR be an error?)
-        headers = HTTPHeaders.parse(
-            'CRLF: crlf\r\nLF: lf\nCR: cr\rMore: more\r\n')
-        self.assertEqual(sorted(headers.get_all()),
-                         [('Cr', 'cr\rMore: more'),
-                          ('Crlf', 'crlf'),
-                          ('Lf', 'lf'),
-                          ])
-
     def test_copy(self):
         all_pairs = [('A', '1'), ('A', '2'), ('B', 'c')]
         h1 = HTTPHeaders()
