@@ -85,6 +85,10 @@ if PY3:
     except ImportError:
         globals()['xrange'] = _xrange
 
+    from _thread import get_ident
+else:
+    from thread import get_ident
+
 try:
     import signal
 except ImportError:
@@ -94,11 +98,6 @@ try:
     from concurrent.futures import ThreadPoolExecutor
 except ImportError:
     ThreadPoolExecutor = None
-
-if PY3:
-    from _thread import get_ident
-else:
-    from thread import get_ident
 
 try:
     import asyncio
