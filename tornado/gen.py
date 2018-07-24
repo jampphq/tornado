@@ -715,11 +715,13 @@ def _contains_yieldpoint(children):
         for i in children.values():
             if isinstance(i, YieldPoint_):
                 return True
+        return False
     if isinstance(children, list):
         YieldPoint_ = YieldPoint
         for i in children:
             if isinstance(i, YieldPoint_):
                 return True
+        return False
     return False
 
 
