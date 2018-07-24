@@ -33,13 +33,13 @@ events. `IOLoop.add_timeout` is a non-blocking alternative to
 from __future__ import absolute_import, division, print_function
 
 import collections
-import datetime
+from datetime import timedelta
 import errno
-import functools
+from functools import partial
 import heapq
 import itertools
 import logging
-import numbers
+from numbers import Real
 import os
 import select
 import sys
@@ -55,8 +55,39 @@ from tornado.platform.auto import set_close_exec, Waker
 from tornado import stack_context
 from tornado.util import (
     PY3, Configurable, errno_from_exception, timedelta_to_seconds,
-    TimeoutError, unicode_type, import_object, xrange,
+    TimeoutError, unicode_type, import_object, xrange as _xrange,
 )
+
+from tornado.stack_context import wrap
+
+try:
+    import cython
+except ImportError:
+    # Shadow cython implementation for decoration
+    class _cython:
+        compiled = False
+        double = float
+        def _ident(*p, **kw):
+            def d(f):
+                return f
+            return d
+        locals().update(dict(
+            locals = _ident
+        ))
+    globals().update(dict(
+        cython = _cython
+    ))
+
+if PY3:
+    try:
+        if not cython.compiled:
+            globals()['xrange'] = _xrange
+    except ImportError:
+        globals()['xrange'] = _xrange
+
+    from _thread import get_ident
+else:
+    from thread import get_ident
 
 try:
     import signal
@@ -67,11 +98,6 @@ try:
     from concurrent.futures import ThreadPoolExecutor
 except ImportError:
     ThreadPoolExecutor = None
-
-if PY3:
-    import _thread as thread
-else:
-    import thread
 
 try:
     import asyncio
@@ -616,9 +642,9 @@ class IOLoop(Configurable):
         .. versionchanged:: 4.0
            Now passes through ``*args`` and ``**kwargs`` to the callback.
         """
-        if isinstance(deadline, numbers.Real):
+        if isinstance(deadline, (float, Real)):
             return self.call_at(deadline, callback, *args, **kwargs)
-        elif isinstance(deadline, datetime.timedelta):
+        elif isinstance(deadline, timedelta):
             return self.call_at(self.time() + timedelta_to_seconds(deadline),
                                 callback, *args, **kwargs)
         else:
@@ -714,7 +740,7 @@ class IOLoop(Configurable):
         interchangeable).
         """
         assert is_future(future)
-        callback = stack_context.wrap(callback)
+        callback = wrap(callback)
         future_add_done_callback(
             future, lambda future: self.add_callback(callback, future))
 
@@ -770,13 +796,17 @@ class IOLoop(Configurable):
                     # result, which should just be ignored.
                     pass
                 else:
-                    self.add_future(ret, self._discard_future_result)
+                    future_add_done_callback(ret, self._discard_future_result)
         except Exception:
             self.handle_callback_exception(callback)
 
-    def _discard_future_result(self, future):
+    @staticmethod
+    def _discard_future_result(future):
         """Avoid unhandled-exception warnings from spawned coroutines."""
-        future.result()
+        try:
+            future.result()
+        except:
+            app_log.error("Exception in callback", exc_info=True)
 
     def handle_callback_exception(self, callback):
         """This method is called whenever a callback run by the `IOLoop`
@@ -906,7 +936,7 @@ class PollIOLoop(IOLoop):
 
     def add_handler(self, fd, handler, events):
         fd, obj = self.split_fd(fd)
-        self._handlers[fd] = (obj, stack_context.wrap(handler))
+        self._handlers[fd] = (obj, wrap(handler))
         self._impl.register(fd, events | self.ERROR)
 
     def update_handler(self, fd, events):
@@ -932,6 +962,7 @@ class PollIOLoop(IOLoop):
             signal.signal(signal.SIGALRM,
                           action if action is not None else signal.SIG_DFL)
 
+    @cython.locals(timeout = _Timeout, now = cython.double)
     def start(self):
         if self._running:
             raise RuntimeError("IOLoop is already running")
@@ -944,7 +975,7 @@ class PollIOLoop(IOLoop):
         old_current = IOLoop.current(instance=False)
         if old_current is not self:
             self.make_current()
-        self._thread_ident = thread.get_ident()
+        self._thread_ident = get_ident()
         self._running = True
 
         # signal.set_wakeup_fd closes a race condition in event loops:
@@ -999,20 +1030,21 @@ class PollIOLoop(IOLoop):
                         # Clean up the timeout queue when it gets large and it's
                         # more than half cancellations.
                         self._cancellations = 0
-                        self._timeouts = [x for x in self._timeouts
-                                          if x.callback is not None]
+                        self._timeouts = [timeout for timeout in self._timeouts
+                                          if timeout.callback is not None]
                         heapq.heapify(self._timeouts)
 
                     timeouts = self._timeouts
                     heappop = heapq.heappop
                     while timeouts:
-                        if timeouts[0].callback is None:
+                        timeout = timeouts[0]
+                        if timeout.callback is None:
                             # The timeout was cancelled.  Note that the
                             # cancellation check is repeated below for timeouts
                             # that are cancelled by another timeout or callback.
                             heappop(timeouts)
                             self._cancellations -= 1
-                        elif timeouts[0].deadline <= now:
+                        elif timeout.deadline <= now:
                             due_timeouts.append(heappop(timeouts))
                         else:
                             break
@@ -1024,22 +1056,24 @@ class PollIOLoop(IOLoop):
                 for i in xrange(min(ncallbacks, ndue_timeouts)):
                     # Multiplex callbacks and timeouts
                     run_callback(pop_callback())
-                    callback = due_timeouts[i].callback
-                    if callback is not None:
-                        run_callback(callback)
-                for i in xrange(ncallbacks, ndue_timeouts):
-                    # Run residual timeouts
-                    callback = due_timeouts[i].callback
+                    timeout = due_timeouts[i]
+                    callback = timeout.callback
                     if callback is not None:
                         run_callback(callback)
                 for i in xrange(ndue_timeouts, ncallbacks):
                     # Run residual callbacks
                     run_callback(pop_callback())
+                for i in xrange(ncallbacks, ndue_timeouts):
+                    # Run residual timeouts
+                    timeout = due_timeouts[i]
+                    callback = timeout.callback
+                    if callback is not None:
+                        run_callback(callback)
                 del pop_callback, run_callback
 
                 # Closures may be holding on to a lot of memory, so allow
                 # them to be freed before we go into our poll wait.
-                due_timeouts = timeout = callback = None
+                due_timeouts = callback = timeout = None
 
                 if self._callbacks:
                     # If any callbacks or timeouts called add_callback,
@@ -1049,7 +1083,9 @@ class PollIOLoop(IOLoop):
                     # If there are any timeouts, schedule the first one.
                     # Use self.time() instead of 'now' to account for time
                     # spent running callbacks.
-                    poll_timeout = self._timeouts[0].deadline - self.time()
+                    timeout = self._timeouts[0]
+                    now = self.time()
+                    poll_timeout = timeout.deadline - now
                     poll_timeout = max(0, min(poll_timeout, _POLL_TIMEOUT))
                 else:
                     # No timeouts and no callbacks, so use the default.
@@ -1123,17 +1159,20 @@ class PollIOLoop(IOLoop):
     def call_at(self, deadline, callback, *args, **kwargs):
         timeout = _Timeout(
             deadline,
-            functools.partial(stack_context.wrap(callback), *args, **kwargs),
+            partial(wrap(callback), *args, **kwargs),
             self)
         heapq.heappush(self._timeouts, timeout)
         return timeout
 
+    @cython.locals(timeout = _Timeout)
     def remove_timeout(self, timeout):
         # Removing from a heap is complicated, so just leave the defunct
         # timeout object in the queue (see discussion in
         # http://docs.python.org/library/heapq.html).
         # If this turns out to be a problem, we could add a garbage
         # collection pass whenever there are too many dead timeouts.
+        if timeout is None:
+            raise ValueError("Expected timeout handle, got None")
         timeout.callback = None
         self._cancellations += 1
 
@@ -1142,9 +1181,8 @@ class PollIOLoop(IOLoop):
             return
         # Blindly insert into self._callbacks. This is safe even
         # from signal handlers because deque.append is atomic.
-        self._callbacks.append(functools.partial(
-            stack_context.wrap(callback), *args, **kwargs))
-        if thread.get_ident() != self._thread_ident:
+        self._callbacks.append(partial(wrap(callback), *args, **kwargs))
+        if get_ident() != self._thread_ident:
             # This will write one byte but Waker.consume() reads many
             # at once, so it's ok to write even when not strictly
             # necessary.
@@ -1162,24 +1200,30 @@ class _Timeout(object):
     """An IOLoop timeout, a UNIX timestamp and a callback"""
 
     # Reduce memory overhead when there are lots of pending callbacks
-    __slots__ = ['deadline', 'callback', 'tdeadline']
+    __slots__ = ['deadline', 'callback', 'seqno']
 
     def __init__(self, deadline, callback, io_loop):
-        if not isinstance(deadline, numbers.Real):
+        if not isinstance(deadline, (float, Real)):
             raise TypeError("Unsupported deadline %r" % deadline)
         self.deadline = deadline
+        self.seqno = next(io_loop._timeout_counter)
         self.callback = callback
-        self.tdeadline = (deadline, next(io_loop._timeout_counter))
 
     # Comparison methods to sort by deadline, with object id as a tiebreaker
     # to guarantee a consistent ordering.  The heapq module uses __le__
     # in python2.5, and __lt__ in 2.6+ (sort() and most other comparisons
     # use __lt__).
+    @cython.locals(self = '_Timeout', other = '_Timeout')
     def __lt__(self, other):
-        return self.tdeadline < other.tdeadline
+        return (self.deadline < other.deadline
+                or (self.deadline == other.deadline
+                    and self.seqno < other.seqno))
 
+    @cython.locals(self = '_Timeout', other = '_Timeout')
     def __le__(self, other):
-        return self.tdeadline <= other.tdeadline
+        return (self.deadline < other.deadline
+                or (self.deadline == other.deadline
+                    and self.seqno <= other.seqno))
 
 
 class PeriodicCallback(object):

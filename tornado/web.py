@@ -153,7 +153,7 @@ May be overridden by passing a ``min_version`` keyword argument.
 """
 
 
-class RequestHandler(object):
+class _RequestHandler(object):
     """Base class for HTTP request handlers.
 
     Subclasses must define at least one of the methods defined in the
@@ -167,7 +167,7 @@ class RequestHandler(object):
     _remove_control_chars_regex = re.compile(r"[\x00-\x08\x0e-\x1f]")
 
     def __init__(self, application, request, **kwargs):
-        super(RequestHandler, self).__init__()
+        super(_RequestHandler, self).__init__()
 
         self.application = application
         self.request = request
@@ -179,19 +179,33 @@ class RequestHandler(object):
         self._headers = None  # type: httputil.HTTPHeaders
         self.path_args = None
         self.path_kwargs = None
-        self.ui = ObjectDict((n, self._ui_method(m)) for n, m in
-                             application.ui_methods.items())
-        # UIModules are available as both `modules` and `_tt_modules` in the
-        # template namespace.  Historically only `modules` was available
-        # but could be clobbered by user additions to the namespace.
-        # The template {% module %} directive looks in `_tt_modules` to avoid
-        # possible conflicts.
-        self.ui["_tt_modules"] = _UIModuleNamespace(self,
-                                                    application.ui_modules)
-        self.ui["modules"] = self.ui["_tt_modules"]
         self.clear()
         self.request.connection.set_close_callback(self.on_connection_close)
         self.initialize(**kwargs)
+
+    @property
+    def ui(self):
+        if self._ui is None:
+            # Lazy initialize ui namespace
+            self._ui = ObjectDict((n, self._ui_method(m)) for n, m in
+                                 self.application.ui_methods.items())
+            # UIModules are available as both `modules` and `_tt_modules` in the
+            # template namespace.  Historically only `modules` was available
+            # but could be clobbered by user additions to the namespace.
+            # The template {% module %} directive looks in `_tt_modules` to avoid
+            # possible conflicts.
+            self._ui["_tt_modules"] = _UIModuleNamespace(self,
+                                                        self.application.ui_modules)
+            self._ui["modules"] = self._ui["_tt_modules"]
+        return self._ui
+
+    @ui.setter
+    def ui(self, value):
+        self._ui = value
+
+    @ui.deleter
+    def ui(self):
+        self._ui = None
 
     def initialize(self):
         """Hook for subclass initialization. Called for each request.
@@ -294,6 +308,7 @@ class RequestHandler(object):
             "Date": httputil.format_timestamp(time.time()),
         })
         self.set_default_headers()
+        self._ui = None
         self._write_buffer = []
         self._status_code = 200
         self._reason = httputil.responses[200]
@@ -387,7 +402,7 @@ class RequestHandler(object):
             raise TypeError("Unsupported header value %r" % value)
         # If \n is allowed into the header, it is possible to inject
         # additional headers or split the request.
-        if RequestHandler._INVALID_HEADER_CHAR_RE.search(retval):
+        if _RequestHandler._INVALID_HEADER_CHAR_RE.search(retval):
             raise ValueError("Unsafe header value %r", retval)
         return retval
 
@@ -492,7 +507,7 @@ class RequestHandler(object):
             if isinstance(v, unicode_type):
                 # Get rid of any weird control chars (unless decoding gave
                 # us bytes, in which case leave it alone)
-                v = RequestHandler._remove_control_chars_regex.sub(" ", v)
+                v = _RequestHandler._remove_control_chars_regex.sub(" ", v)
             if strip:
                 v = v.strip()
             values.append(v)
@@ -895,12 +910,12 @@ class RequestHandler(object):
             while frame.f_code.co_filename == web_file:
                 frame = frame.f_back
             template_path = os.path.dirname(frame.f_code.co_filename)
-        with RequestHandler._template_loader_lock:
-            if template_path not in RequestHandler._template_loaders:
+        with _RequestHandler._template_loader_lock:
+            if template_path not in _RequestHandler._template_loaders:
                 loader = self.create_template_loader(template_path)
-                RequestHandler._template_loaders[template_path] = loader
+                _RequestHandler._template_loaders[template_path] = loader
             else:
-                loader = RequestHandler._template_loaders[template_path]
+                loader = _RequestHandler._template_loaders[template_path]
         t = loader.load(template_name)
         namespace = self.get_template_namespace()
         namespace.update(kwargs)
@@ -1039,7 +1054,9 @@ class RequestHandler(object):
                 assert not self._write_buffer, "Cannot send body with %s" % self._status_code
                 self._clear_headers_for_304()
             elif "Content-Length" not in self._headers:
-                content_length = sum(len(part) for part in self._write_buffer)
+                content_length = 0
+                for part in self._write_buffer:
+                    content_length += len(part)
                 self.set_header("Content-Length", content_length)
 
         if hasattr(self.request, "connection"):
@@ -1693,6 +1710,11 @@ class RequestHandler(object):
         for h in headers:
             self.clear_header(h)
 
+class RequestHandler(_RequestHandler):
+    # Non-cdef class that can be monkey-patched
+    # (gunicorn does this)
+    pass
+
 
 def asynchronous(method):
     """Wrap request handler methods with this if they are asynchronous.
@@ -2204,19 +2226,22 @@ class _HandlerDelegate(httputil.HTTPMessageDelegate):
         # If template cache is disabled (usually in the debug mode),
         # re-compile templates and reload static files on every
         # request so you don't need to restart to see changes
-        if not self.application.settings.get("compiled_template_cache", True):
+        application = self.application
+        settings = application.settings
+        if not settings.get("compiled_template_cache", True):
             with RequestHandler._template_loader_lock:
                 for loader in RequestHandler._template_loaders.values():
                     loader.reset()
-        if not self.application.settings.get('static_hash_cache', True):
+        if not settings.get('static_hash_cache', True):
             StaticFileHandler.reset()
 
-        self.handler = self.handler_class(self.application, self.request,
-                                          **self.handler_kwargs)
-        transforms = [t(self.request) for t in self.application.transforms]
+        request = self.request
+        self.handler = handler = self.handler_class(application, request,
+                                                    **self.handler_kwargs)
+        transforms = [t(request) for t in application.transforms]
 
         if self.stream_request_body:
-            self.handler._prepared_future = Future()
+            handler._prepared_future = Future()
         # Note that if an exception escapes handler._execute it will be
         # trapped in the Future it returns (which we are ignoring here,
         # leaving it to be logged when the Future is GC'd).
@@ -2224,12 +2249,12 @@ class _HandlerDelegate(httputil.HTTPMessageDelegate):
         # except handler, and we cannot easily access the IOLoop here to
         # call add_future (because of the requirement to remain compatible
         # with WSGI)
-        self.handler._execute(transforms, *self.path_args,
-                              **self.path_kwargs)
+        handler._execute(transforms, *self.path_args,
+                         **self.path_kwargs)
         # If we are streaming the request body, then execute() is finished
         # when the handler has prepared to receive the body.  If not,
         # it doesn't matter when execute() finishes (so we return None)
-        return self.handler._prepared_future
+        return handler._prepared_future
 
 
 class HTTPError(Exception):

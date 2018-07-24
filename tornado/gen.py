@@ -711,9 +711,17 @@ def _contains_yieldpoint(children):
     and `multi_future`.
     """
     if isinstance(children, dict):
-        return any(isinstance(i, YieldPoint) for i in children.values())
+        YieldPoint_ = YieldPoint
+        for i in children.values():
+            if isinstance(i, YieldPoint_):
+                return True
+        return False
     if isinstance(children, list):
-        return any(isinstance(i, YieldPoint) for i in children)
+        YieldPoint_ = YieldPoint
+        for i in children:
+            if isinstance(i, YieldPoint_):
+                return True
+        return False
     return False
 
 
@@ -1120,13 +1128,14 @@ class Runner(object):
             return
         try:
             self.running = True
+            stack_context_state = stack_context._state
             while True:
                 future = self.future
                 if not future.done():
                     return
                 self.future = None
                 try:
-                    orig_stack_contexts = stack_context._state.contexts
+                    orig_stack_contexts = stack_context_state.contexts
                     exc_info = None
 
                     try:
@@ -1146,7 +1155,7 @@ class Runner(object):
                     else:
                         yielded = self.gen.send(value)
 
-                    if stack_context._state.contexts is not orig_stack_contexts:
+                    if stack_context_state.contexts is not orig_stack_contexts:
                         self.gen.throw(
                             stack_context.StackContextInconsistentError(
                                 'stack_context inconsistency (probably caused '

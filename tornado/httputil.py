@@ -47,6 +47,25 @@ else:
     from urlparse import urlparse, urlunparse, parse_qsl
 
 
+try:
+    import cython
+except ImportError:
+    # Shadow cython implementation for decoration
+    class _cython:
+        compiled = False
+        double = float
+        def _ident(*p, **kw):
+            def d(f):
+                return f
+            return d
+        locals().update(dict(
+            locals = _ident
+        ))
+    globals().update(dict(
+        cython = _cython
+    ))
+
+
 # responses is unused in this file, but we re-export it to other files.
 # Reference it so pyflakes doesn't complain.
 responses
@@ -476,14 +495,22 @@ class HTTPServerRequest(object):
         except SSLError:
             return None
 
+    @cython.locals(arguments=dict, body_arguments=dict)
     def _parse_body(self):
+        headers = self.headers
+        body_arguments = self.body_arguments
         parse_body_arguments(
-            self.headers.get("Content-Type", ""), self.body,
-            self.body_arguments, self.files,
-            self.headers)
+            headers.get("Content-Type", ""), self.body,
+            body_arguments, self.files,
+            headers)
 
-        for k, v in self.body_arguments.items():
-            self.arguments.setdefault(k, []).extend(v)
+        arguments = self.arguments
+        if PY3:
+            for k, v in body_arguments.items():
+                arguments.setdefault(k, []).extend(v)
+        else:
+            for k, v in body_arguments.iteritems():
+                arguments.setdefault(k, []).extend(v)
 
     def __repr__(self):
         attrs = ("protocol", "host", "method", "uri", "version", "remote_ip")
@@ -760,9 +787,14 @@ def parse_body_arguments(content_type, body, arguments, files, headers=None):
         except Exception as e:
             gen_log.warning('Invalid x-www-form-urlencoded body: %s', e)
             uri_arguments = {}
-        for name, values in uri_arguments.items():
-            if values:
-                arguments.setdefault(name, []).extend(values)
+        if PY3:
+            for name, values in uri_arguments.items():
+                if values:
+                    arguments.setdefault(name, []).extend(values)
+        else:
+            for name, values in uri_arguments.iteritems():
+                if values:
+                    arguments.setdefault(name, []).extend(values)
     elif content_type.startswith("multipart/form-data"):
         try:
             fields = content_type.split(";")
