@@ -788,7 +788,7 @@ def parse_body_arguments(content_type, body, arguments, files, headers=None):
             gen_log.warning('Invalid x-www-form-urlencoded body: %s', e)
             uri_arguments = {}
         if PY3:
-            for name, values in uri_arguments.tems():
+            for name, values in uri_arguments.items():
                 if values:
                     arguments.setdefault(name, []).extend(values)
         else:
