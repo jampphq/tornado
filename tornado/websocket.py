@@ -1145,8 +1145,16 @@ class WebSocketClientConnection(simple_httpclient._HTTPConnection):
 
         self.tcp_client = TCPClient()
         super(WebSocketClientConnection, self).__init__(
-            None, request, lambda: None, self._on_http_response,
+            self, request, lambda: None, self._on_http_response,
             104857600, self.tcp_client, 65536, 104857600)
+
+    def fetch(self, request, raise_error=True):
+        self.request.url = request.url
+        IOLoop.current().add_callback(
+            super(WebSocketClientConnection, self).__init__,
+            self, self.request, lambda: None, self._on_http_response,
+            104857600, self.tcp_client, 65536, 104857600)
+        return Future()
 
     def close(self, code=None, reason=None):
         """Closes the websocket connection.
