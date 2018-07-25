@@ -679,8 +679,12 @@ class WebSocketProtocol13(WebSocketProtocol):
             gen_log.debug(log_msg)
             return
 
+        accept_future = self._accept_connection()
+        IOLoop.current().add_future(accept_future, self._handle_accept_connection_result)
+
+    def _handle_accept_connection_result(self, f):
         try:
-            self._accept_connection()
+            f.result()
         except ValueError:
             gen_log.debug("Malformed WebSocket request received",
                           exc_info=True)

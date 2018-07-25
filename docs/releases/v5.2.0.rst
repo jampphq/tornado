@@ -1,7 +1,7 @@
 What's new in Tornado 5.2
 =========================
 
-Unreleased
+2018-07-25
 ----------
 
 IOLoop optimizations
@@ -13,3 +13,9 @@ callbacks synchronously. In particular, future done callbacks are usually
 safe to perform synchronously since that's what most Future implementations
 do anyway. Improved the fairness of the IOLoop schedule regarding timeouts,
 to reduce the maximum request latency when under constant pressure.
+
+Bugfixes
+~~~~~~~~
+
+- Fix websocket error handling of errors happening
+  during connection acceptance
