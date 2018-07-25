@@ -679,8 +679,12 @@ class WebSocketProtocol13(WebSocketProtocol):
             gen_log.debug(log_msg)
             return
 
+        accept_future = self._accept_connection()
+        IOLoop.current().add_future(accept_future, self._handle_accept_connection_result)
+
+    def _handle_accept_connection_result(self, f):
         try:
-            self._accept_connection()
+            f.result()
         except ValueError:
             gen_log.debug("Malformed WebSocket request received",
                           exc_info=True)
@@ -1141,8 +1145,19 @@ class WebSocketClientConnection(simple_httpclient._HTTPConnection):
 
         self.tcp_client = TCPClient()
         super(WebSocketClientConnection, self).__init__(
-            None, request, lambda: None, self._on_http_response,
+            self, request, lambda: None, self._on_http_response,
             104857600, self.tcp_client, 65536, 104857600)
+
+    def fetch(self, request, raise_error=True):
+        self.request.url = request.url
+        self.request.max_redirects = request.max_redirects
+
+        # Restart the request on the next IOLoop cycle
+        IOLoop.current().add_callback(
+            super(WebSocketClientConnection, self).__init__,
+            self, self.request, lambda: None, self._on_http_response,
+            104857600, self.tcp_client, 65536, 104857600)
+        return Future()
 
     def close(self, code=None, reason=None):
         """Closes the websocket connection.
