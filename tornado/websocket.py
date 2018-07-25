@@ -1150,6 +1150,10 @@ class WebSocketClientConnection(simple_httpclient._HTTPConnection):
 
     def fetch(self, request, raise_error=True):
         self.request.url = request.url
+        self.request.max_redirects = request.max_redirects
+        del self.request.headers["Host"]
+
+        # Restart the request on the next IOLoop cycle
         IOLoop.current().add_callback(
             super(WebSocketClientConnection, self).__init__,
             self, self.request, lambda: None, self._on_http_response,
