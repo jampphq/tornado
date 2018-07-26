@@ -200,6 +200,8 @@ setup(
             "templates/utf8.html",
             "test.crt",
             "test.key",
+        ],
+        "tornado": [
             "*.pxd",
         ],
     },
