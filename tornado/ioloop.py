@@ -1026,6 +1026,7 @@ class PollIOLoop(IOLoop):
             pop_callback = _callbacks.popleft
             run_callback = self._run_callback
             heappop = heapq.heappop
+            _time = self.time
 
             while True:
                 # Prevent IO event starvation by delaying new callbacks
@@ -1038,7 +1039,7 @@ class PollIOLoop(IOLoop):
                 # schedule anything in this iteration.
                 due_timeouts = []
                 if timeouts:
-                    now = self.time()
+                    now = _time()
 
                     if (self._cancellations > 512 and
                             self._cancellations > (len(timeouts) >> 1)):
@@ -1084,7 +1085,7 @@ class PollIOLoop(IOLoop):
                 # them to be freed before we go into our poll wait.
                 due_timeouts = callback = timeout = None
 
-                if _callbacks:
+                if _callbacks or _events:
                     # If any callbacks or timeouts called add_callback,
                     # we don't want to wait in poll() before we run them.
                     poll_timeout = 0.0
@@ -1093,7 +1094,7 @@ class PollIOLoop(IOLoop):
                     # Use self.time() instead of 'now' to account for time
                     # spent running callbacks.
                     timeout = timeouts[0]
-                    now = self.time()
+                    now = _time()
                     poll_timeout = timeout.deadline - now
                     poll_timeout = max(0, min(poll_timeout, _POLL_TIMEOUT))
                 else:
@@ -1144,7 +1145,14 @@ class PollIOLoop(IOLoop):
                             self.handle_callback_exception(_handlers.get(fd))
                     except Exception:
                         self.handle_callback_exception(_handlers.get(fd))
-                fd_obj = handler_func = None
+                    finally:
+                        fd_obj = handler_func = None
+
+                    if timeout is not None:
+                        now = _time()
+                        if timeout.deadline <= now:
+                            # Process timeouts
+                            break
 
         finally:
             # reset the stopped flag so another start/stop pair can be issued
