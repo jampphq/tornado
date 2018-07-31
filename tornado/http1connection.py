@@ -163,20 +163,20 @@ class HTTP1Connection(httputil.HTTPConnection):
             header_future = self.stream.read_until(
                 b"\r\n\r\n",
                 max_bytes=self.params.max_header_size)
-            if self.params.header_timeout is None:
-                if header_future.done():
-                    header_data = header_future.result()
-                else:
-                    header_data = yield header_future
+            if header_future.done():
+                header_data = header_future.result()
             else:
-                try:
-                    header_data = yield gen.with_timeout(
-                        self.stream.io_loop.time() + self.params.header_timeout,
-                        header_future,
-                        quiet_exceptions=iostream.StreamClosedError)
-                except gen.TimeoutError:
-                    self.close()
-                    raise ReturnFalse
+                if self.params.header_timeout is None:
+                    header_data = yield header_future
+                else:
+                    try:
+                        header_data = yield gen.with_timeout(
+                            self.stream.io_loop.time() + self.params.header_timeout,
+                            header_future,
+                            quiet_exceptions=iostream.StreamClosedError)
+                    except gen.TimeoutError:
+                        self.close()
+                        raise ReturnFalse
             start_line, headers = self._parse_headers(header_data)
             if self.is_client:
                 start_line = httputil.parse_response_start_line(start_line)
@@ -226,23 +226,23 @@ class HTTP1Connection(httputil.HTTPConnection):
                 body_future = self._read_body(
                     start_line.code if self.is_client else 0, headers, delegate)
                 if body_future is not None:
-                    if self._body_timeout is None:
-                        if body_future.done():
-                            # Check for exeptions
-                            body_future.result()
-                        else:
-                            yield body_future
+                    if body_future.done():
+                        # Check for exeptions
+                        body_future.result()
                     else:
-                        try:
-                            yield gen.with_timeout(
-                                self.stream.io_loop.time() + self._body_timeout,
-                                body_future,
-                                quiet_exceptions=iostream.StreamClosedError)
-                        except gen.TimeoutError:
-                            gen_log.info("Timeout reading body from %s",
-                                         self.context)
-                            self.stream.close()
-                            raise ReturnFalse
+                        if self._body_timeout is None:
+                            yield body_future
+                        else:
+                            try:
+                                yield gen.with_timeout(
+                                    self.stream.io_loop.time() + self._body_timeout,
+                                    body_future,
+                                    quiet_exceptions=iostream.StreamClosedError)
+                            except gen.TimeoutError:
+                                gen_log.info("Timeout reading body from %s",
+                                             self.context)
+                                self.stream.close()
+                                raise ReturnFalse
             self._read_finished = True
             if not self._write_finished or self.is_client:
                 need_delegate_close = False
