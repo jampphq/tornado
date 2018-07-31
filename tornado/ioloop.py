@@ -1164,7 +1164,7 @@ class PollIOLoop(IOLoop):
         heapq.heappush(self._timeouts, timeout)
         return timeout
 
-    @cython.locals(timeout = _Timeout)
+    @cython.locals(timeout = '_Timeout')
     def remove_timeout(self, timeout):
         # Removing from a heap is complicated, so just leave the defunct
         # timeout object in the queue (see discussion in
@@ -1181,7 +1181,10 @@ class PollIOLoop(IOLoop):
             return
         # Blindly insert into self._callbacks. This is safe even
         # from signal handlers because deque.append is atomic.
-        self._callbacks.append(partial(wrap(callback), *args, **kwargs))
+        callback = wrap(callback)
+        if args or kwargs:
+            callback = partial(callback, *args, **kwargs)
+        self._callbacks.append(callback)
         if get_ident() != self._thread_ident:
             # This will write one byte but Waker.consume() reads many
             # at once, so it's ok to write even when not strictly

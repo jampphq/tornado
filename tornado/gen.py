@@ -103,6 +103,7 @@ from tornado.concurrent import (Future, is_future, chain_future, future_set_exc_
 from tornado.ioloop import IOLoop
 from tornado.log import app_log
 from tornado import stack_context
+from tornado.stack_context import wrap
 from tornado.util import PY3, raise_exc_info, TimeoutError
 
 try:
@@ -236,7 +237,7 @@ def engine(func):
         # The engine interface doesn't give us any way to return
         # errors but to raise them into the stack context.
         # Save the stack context here to use when the Future has resolved.
-        future_add_done_callback(future, stack_context.wrap(final_callback))
+        future_add_done_callback(future, wrap(final_callback))
     return wrapper
 
 
@@ -344,7 +345,7 @@ def _make_coroutine_wrapper(func, replace_callback):
                     # attribute on the Future.
                     # (Github issues #1769, #2229).
                     runner = Runner(result, future, yielded)
-                    future.add_done_callback(lambda _: runner)
+                    future.add_done_callback(runner)
                 yielded = None
                 try:
                     return future
@@ -1087,6 +1088,11 @@ class Runner(object):
             gen = result_future = first_yielded = None
             self.run()
 
+    def __call__(self, *p):
+        # No-op, but useful as future callback to keep strong references
+        # to the runner while the result future is strongly referenced
+        pass
+
     def register_callback(self, key):
         """Adds ``key`` to the list of callbacks."""
         if self.pending_callbacks is None:
@@ -1189,6 +1195,20 @@ class Runner(object):
         finally:
             self.running = False
 
+    def _start_yield_point(self, yielded, run):
+        try:
+            yielded.start(self)
+            if yielded.is_ready():
+                future_set_result_unless_cancelled(self.future, yielded.get_result())
+            else:
+                self.yield_point = yielded
+        except Exception:
+            self.future = Future()
+            future_set_exc_info(self.future, sys.exc_info())
+
+        if run:
+            self.run()
+
     def handle_yield(self, yielded):
         # Lists containing YieldPoints require stack contexts;
         # other lists are handled in convert_yielded.
@@ -1200,31 +1220,17 @@ class Runner(object):
             # through the generic convert_yielded mechanism.
             self.future = Future()
 
-            def start_yield_point():
-                try:
-                    yielded.start(self)
-                    if yielded.is_ready():
-                        future_set_result_unless_cancelled(self.future, yielded.get_result())
-                    else:
-                        self.yield_point = yielded
-                except Exception:
-                    self.future = Future()
-                    future_set_exc_info(self.future, sys.exc_info())
-
             if self.stack_context_deactivate is None:
                 # Start a stack context if this is the first
                 # YieldPoint we've seen.
                 with stack_context.ExceptionStackContext(
                         self.handle_exception) as deactivate:
                     self.stack_context_deactivate = deactivate
-
-                    def cb():
-                        start_yield_point()
-                        self.run()
-                    self.io_loop.add_callback(cb)
+                    self.io_loop.add_callback(self._start_yield_point,
+                                              yielded, True)
                     return False
             else:
-                start_yield_point()
+                self._start_yield_point(yielded, False)
         else:
             try:
                 self.future = convert_yielded(yielded)
@@ -1236,17 +1242,14 @@ class Runner(object):
             self.io_loop.add_callback(self.run)
             return False
         elif not self.future.done():
-            def inner(f):
-                # Break a reference cycle to speed GC.
-                f = None  # noqa
-                self.run()
-            self.io_loop.add_future(
-                self.future, inner)
+            def inner(f, run = wrap(self.run), io_loop = self.io_loop):
+                io_loop.add_callback(run)
+            future_add_done_callback(self.future, inner)
             return False
         return True
 
     def result_callback(self, key):
-        return stack_context.wrap(_argument_adapter(
+        return wrap(_argument_adapter(
             functools.partial(self.set_result, key)))
 
     def handle_exception(self, typ, value, tb):
