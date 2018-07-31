@@ -1148,12 +1148,6 @@ class PollIOLoop(IOLoop):
                     finally:
                         fd_obj = handler_func = None
 
-                    if timeout is not None:
-                        now = _time()
-                        if timeout.deadline <= now:
-                            # Process timeouts
-                            break
-
         finally:
             # reset the stopped flag so another start/stop pair can be issued
             self._stopped = False
