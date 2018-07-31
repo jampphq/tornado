@@ -1,0 +1,11 @@
+What's new in Tornado 5.2
+=========================
+
+Unreleased
+----------
+
+IOLoop optimizations
+~~~~~~~~~~~~~~~~~~~~
+
+IOLoop optimizations to reduce GC pressure by breaking cycles earlier.
+
