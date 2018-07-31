@@ -1012,6 +1012,7 @@ class PollIOLoop(IOLoop):
                 # is no longer valid.
                 old_wakeup_fd = None
 
+        _blocking_signal_threshold = None
         try:
             # These are never changed over the lifetime of the IOLoop, so
             # we can cache those attributes into locals and avoid us some
@@ -1102,7 +1103,7 @@ class PollIOLoop(IOLoop):
                 if not self._running:
                     break
 
-                if self._blocking_signal_threshold is not None:
+                if _blocking_signal_threshold is not None:
                     # clear alarm so it doesn't fire while poll is waiting for
                     # events.
                     signal.setitimer(signal.ITIMER_REAL, 0, 0)
@@ -1120,9 +1121,10 @@ class PollIOLoop(IOLoop):
                     else:
                         raise
 
-                if self._blocking_signal_threshold is not None:
+                _blocking_signal_threshold = self._blocking_signal_threshold
+                if _blocking_signal_threshold is not None:
                     signal.setitimer(signal.ITIMER_REAL,
-                                     self._blocking_signal_threshold, 0)
+                                     _blocking_signal_threshold, 0)
 
                 # Pop one fd at a time from the set of pending fds and run
                 # its handler. Since that handler may perform actions on
@@ -1147,7 +1149,7 @@ class PollIOLoop(IOLoop):
         finally:
             # reset the stopped flag so another start/stop pair can be issued
             self._stopped = False
-            if self._blocking_signal_threshold is not None:
+            if _blocking_signal_threshold is not None:
                 signal.setitimer(signal.ITIMER_REAL, 0, 0)
             if old_current is None:
                 IOLoop.clear_current()
