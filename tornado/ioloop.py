@@ -962,7 +962,8 @@ class PollIOLoop(IOLoop):
             signal.signal(signal.SIGALRM,
                           action if action is not None else signal.SIG_DFL)
 
-    @cython.locals(timeout = _Timeout, now = cython.double)
+    @cython.locals(timeout = _Timeout, now = cython.double,
+                   timeouts = list, _events = dict, _handlers = dict)
     def start(self):
         if self._running:
             raise RuntimeError("IOLoop is already running")
@@ -1011,31 +1012,44 @@ class PollIOLoop(IOLoop):
                 # is no longer valid.
                 old_wakeup_fd = None
 
+        _blocking_signal_threshold = None
         try:
+            # These are never changed over the lifetime of the IOLoop, so
+            # we can cache those attributes into locals and avoid us some
+            # per-loop attribute access overhead
+            #
+            # _timeouts does change, but this loop is the one doing it, so...
+            _callbacks = self._callbacks
+            _events = self._events
+            _handlers = self._handlers
+            timeouts = self._timeouts
+            pop_callback = _callbacks.popleft
+            run_callback = self._run_callback
+            heappop = heapq.heappop
+            _time = self.time
+
             while True:
                 # Prevent IO event starvation by delaying new callbacks
                 # to the next iteration of the event loop.
-                ncallbacks = len(self._callbacks)
+                ncallbacks = len(_callbacks)
 
                 # Add any timeouts that have come due to the callback list.
                 # Do not run anything until we have determined which ones
                 # are ready, so timeouts that call add_timeout cannot
                 # schedule anything in this iteration.
                 due_timeouts = []
-                if self._timeouts:
-                    now = self.time()
+                if timeouts:
+                    now = _time()
 
                     if (self._cancellations > 512 and
-                            self._cancellations > (len(self._timeouts) >> 1)):
+                            self._cancellations > (len(timeouts) >> 1)):
                         # Clean up the timeout queue when it gets large and it's
                         # more than half cancellations.
                         self._cancellations = 0
-                        self._timeouts = [timeout for timeout in self._timeouts
-                                          if timeout.callback is not None]
-                        heapq.heapify(self._timeouts)
+                        self._timeouts = timeouts = [timeout for timeout in timeouts
+                                                     if timeout.callback is not None]
+                        heapq.heapify(timeouts)
 
-                    timeouts = self._timeouts
-                    heappop = heapq.heappop
                     while timeouts:
                         timeout = timeouts[0]
                         if timeout.callback is None:
@@ -1048,11 +1062,8 @@ class PollIOLoop(IOLoop):
                             due_timeouts.append(heappop(timeouts))
                         else:
                             break
-                    del timeouts, heappop
 
                 ndue_timeouts = len(due_timeouts)
-                pop_callback = self._callbacks.popleft
-                run_callback = self._run_callback
                 for i in xrange(min(ncallbacks, ndue_timeouts)):
                     # Multiplex callbacks and timeouts
                     run_callback(pop_callback())
@@ -1069,22 +1080,21 @@ class PollIOLoop(IOLoop):
                     callback = timeout.callback
                     if callback is not None:
                         run_callback(callback)
-                del pop_callback, run_callback
 
                 # Closures may be holding on to a lot of memory, so allow
                 # them to be freed before we go into our poll wait.
                 due_timeouts = callback = timeout = None
 
-                if self._callbacks:
+                if _callbacks or _events:
                     # If any callbacks or timeouts called add_callback,
                     # we don't want to wait in poll() before we run them.
                     poll_timeout = 0.0
-                elif self._timeouts:
+                elif timeouts:
                     # If there are any timeouts, schedule the first one.
                     # Use self.time() instead of 'now' to account for time
                     # spent running callbacks.
-                    timeout = self._timeouts[0]
-                    now = self.time()
+                    timeout = timeouts[0]
+                    now = _time()
                     poll_timeout = timeout.deadline - now
                     poll_timeout = max(0, min(poll_timeout, _POLL_TIMEOUT))
                 else:
@@ -1094,7 +1104,7 @@ class PollIOLoop(IOLoop):
                 if not self._running:
                     break
 
-                if self._blocking_signal_threshold is not None:
+                if _blocking_signal_threshold is not None:
                     # clear alarm so it doesn't fire while poll is waiting for
                     # events.
                     signal.setitimer(signal.ITIMER_REAL, 0, 0)
@@ -1112,34 +1122,36 @@ class PollIOLoop(IOLoop):
                     else:
                         raise
 
-                if self._blocking_signal_threshold is not None:
+                _blocking_signal_threshold = self._blocking_signal_threshold
+                if _blocking_signal_threshold is not None:
                     signal.setitimer(signal.ITIMER_REAL,
-                                     self._blocking_signal_threshold, 0)
+                                     _blocking_signal_threshold, 0)
 
                 # Pop one fd at a time from the set of pending fds and run
                 # its handler. Since that handler may perform actions on
                 # other file descriptors, there may be reentrant calls to
                 # this IOLoop that modify self._events
-                self._events.update(event_pairs)
-                while self._events:
-                    fd, events = self._events.popitem()
+                _events.update(event_pairs)
+                while _events:
+                    fd, events = _events.popitem()
                     try:
-                        fd_obj, handler_func = self._handlers[fd]
+                        fd_obj, handler_func = _handlers[fd]
                         handler_func(fd_obj, events)
                     except (OSError, IOError) as e:
                         if errno_from_exception(e) == errno.EPIPE:
                             # Happens when the client closes the connection
                             pass
                         else:
-                            self.handle_callback_exception(self._handlers.get(fd))
+                            self.handle_callback_exception(_handlers.get(fd))
                     except Exception:
-                        self.handle_callback_exception(self._handlers.get(fd))
-                fd_obj = handler_func = None
+                        self.handle_callback_exception(_handlers.get(fd))
+                    finally:
+                        fd_obj = handler_func = None
 
         finally:
             # reset the stopped flag so another start/stop pair can be issued
             self._stopped = False
-            if self._blocking_signal_threshold is not None:
+            if _blocking_signal_threshold is not None:
                 signal.setitimer(signal.ITIMER_REAL, 0, 0)
             if old_current is None:
                 IOLoop.clear_current()

@@ -238,10 +238,14 @@ def add_accept_handler(sock, callback):
         # (and rearranging this method to call accept() as many times
         # as possible before running any callbacks would have adverse
         # effects on load balancing in multiprocess configurations).
-        # Instead, we use the (default) listen backlog as a rough
-        # heuristic for the number of connections we can reasonably
-        # accept at once.
-        for i in xrange(_DEFAULT_BACKLOG):
+        # We use a heuristic that will aim at accepting the whole
+        # (default) backlog of pending connections at once, minus
+        # any currently being served by the request handler, and at
+        # minimum 1. That means as load increases, the server will
+        # accept less connections at once, spreading the load better.
+        backlog = _DEFAULT_BACKLOG
+        handling = len(getattr(io_loop, '_handlers', ()))
+        for i in xrange(max(1, backlog - handling)):
             if removed[0]:
                 # The socket was probably closed
                 return
