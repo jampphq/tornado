@@ -1,0 +1,13 @@
+What's new in Tornado 5.2.1
+===========================
+
+Unreleased
+----------
+
+Optimizations
+~~~~~~~~~~~~~
+
+- Optimized HTTP header parsing.
+- Reduced the role of regex matching in the HTTP parser.
+- Optimized IOLoop handling of timeouts in some common cases.
+
