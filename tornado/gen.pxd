@@ -1,4 +1,5 @@
 cdef object wrap
+cdef object IOLoop
 
 cdef class Runner:
     cdef object __weakref__
