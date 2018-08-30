@@ -1026,6 +1026,7 @@ class PollIOLoop(IOLoop):
             pop_callback = _callbacks.popleft
             run_callback = self._run_callback
             heappop = heapq.heappop
+            heapify = heapq.heapify
             _time = self.time
 
             while True:
@@ -1040,6 +1041,7 @@ class PollIOLoop(IOLoop):
                 due_timeouts = []
                 if timeouts:
                     now = _time()
+                    needs_heapify = False
 
                     if (self._cancellations > 512 and
                             self._cancellations > (len(timeouts) >> 1)):
@@ -1048,7 +1050,29 @@ class PollIOLoop(IOLoop):
                         self._cancellations = 0
                         self._timeouts = timeouts = [timeout for timeout in timeouts
                                                      if timeout.callback is not None]
-                        heapq.heapify(timeouts)
+                        if len(timeouts) > 1:
+                            needs_heapify = True
+
+                    ntimeouts = len(timeouts)
+                    if ntimeouts > 0 and ntimeouts < 32:
+                        timeout = timeouts[0]
+                        if timeout.deadline <= now:
+                            # Fast path: Check if all timeouts are due, then we don't need
+                            # to heapify, we just push them all into the due list
+                            ndue_timeouts = 0
+                            for timeout in timeouts:
+                                if timeout.callback is not None and timeout.deadline > now:
+                                    break
+                            else:
+                                # All timeouts are due or cancelled, pop them all at once
+                                for timeout in timeouts:
+                                    if timeout.callback is not None and timeout.deadline <= now:
+                                        due_timeouts.append(timeout)
+                                del timeouts[:]
+                                needs_heapify = False
+
+                    if needs_heapify:
+                        heapify(timeouts)
 
                     while timeouts:
                         timeout = timeouts[0]
