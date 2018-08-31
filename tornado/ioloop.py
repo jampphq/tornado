@@ -962,7 +962,7 @@ class PollIOLoop(IOLoop):
             signal.signal(signal.SIGALRM,
                           action if action is not None else signal.SIG_DFL)
 
-    @cython.locals(timeout = _Timeout, now = cython.double,
+    @cython.locals(timeout = _Timeout, timeout2 = _Timeout, now = cython.double,
                    timeouts = list, _events = dict, _handlers = dict)
     def start(self):
         if self._running:
@@ -1054,11 +1054,13 @@ class PollIOLoop(IOLoop):
                             needs_heapify = True
 
                     ntimeouts = len(timeouts)
-                    if ntimeouts > 0 and ntimeouts < 32:
+                    if ntimeouts > 0:
                         timeout = timeouts[0]
-                        if timeout.deadline <= now:
+                        timeout2 = timeouts[-1]
+                        if timeout.deadline <= now and timeout2.deadline <= now:
                             # Fast path: Check if all timeouts are due, then we don't need
-                            # to heapify, we just push them all into the due list
+                            # to heapify or take them one at a time, we just push them all
+                            # into the due list
                             ndue_timeouts = 0
                             for timeout in timeouts:
                                 if timeout.callback is not None and timeout.deadline > now:
@@ -1066,10 +1068,16 @@ class PollIOLoop(IOLoop):
                             else:
                                 # All timeouts are due or cancelled, pop them all at once
                                 for timeout in timeouts:
-                                    if timeout.callback is not None and timeout.deadline <= now:
+                                    if timeout.callback is not None:
                                         due_timeouts.append(timeout)
                                 del timeouts[:]
                                 needs_heapify = False
+
+                                # Make sure we process timeouts in deadline order
+                                # In-place builtin Tim Sort should be better at this than manual
+                                # heap sort through heapq, so we still win
+                                if len(due_timeouts) > 1:
+                                    due_timeouts.sort()
 
                     if needs_heapify:
                         heapify(timeouts)
