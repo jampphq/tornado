@@ -276,31 +276,38 @@ class HTTPHeaders(object):
         self._as_list.clear()
         self._last_key = None
 
-    def update(*args, **kwds):
+    def update(self, *args, **kwds):
         ''' D.update([E, ]**F) -> None.  Update D from mapping/iterable E and F.
             If E present and has a .keys() method, does:     for k in E: D[k] = E[k]
             If E present and lacks .keys() method, does:     for (k, v) in E: D[k] = v
             In either case, this is followed by: for k, v in F.items(): D[k] = v
         '''
-        if len(args) > 2:
+        if len(args) > 1:
             raise TypeError("update() takes at most 2 positional "
-                            "arguments ({} given)".format(len(args)))
-        elif not args:
-            raise TypeError("update() takes at least 1 argument (0 given)")
-        self = args[0]
-        other = args[1] if len(args) >= 2 else ()
+                            "arguments ({} given)".format(len(args)+1))
+        other = args[0] if len(args) >= 1 else ()
 
-        if isinstance(other, collections.Mapping):
+        if isinstance(other, HTTPHeaders):
+            self._dict.update(other._dict)
+            self._as_list.update(other._as_list)
+        elif isinstance(other, collections.Mapping):
             for key in other:
                 self[key] = other[key]
+        elif hasattr(other, "iteritems"):
+            for key, value in other.iteritems():
+                self[key] = value
         elif hasattr(other, "keys"):
             for key in other.keys():
                 self[key] = other[key]
         else:
             for key, value in other:
                 self[key] = value
-        for key, value in kwds.items():
-            self[key] = value
+        if PY3:
+            for key, value in kwds.items():
+                self[key] = value
+        else:
+            for key, value in kwds.iteritems():
+                self[key] = value
 
     def setdefault(self, key, default=None):
         'D.setdefault(k[,d]) -> D.get(k,d), also set D[k]=d if k not in D'
@@ -316,7 +323,7 @@ class HTTPHeaders(object):
         return self._dict.get(_normalized_headers[key], default)
 
     def __contains__(self, key):
-        return key in self._dict
+        return _normalized_headers[key] in self._dict
 
     def iterkeys(self):
         'D.iterkeys() -> an iterator over the keys of D'
