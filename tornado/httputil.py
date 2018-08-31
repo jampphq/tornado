@@ -156,12 +156,8 @@ class HTTPHeaders(object):
         self._dict = {}  # type: typing.Dict[str, str]
         self._as_list = {}  # type: typing.Dict[str, typing.List[str]]
         self._last_key = None
-        if (len(args) == 1 and len(kwargs) == 0 and
-                isinstance(args[0], HTTPHeaders)):
-            # Copy constructor
-            for k, v in args[0].get_all():
-                self.add(k, v)
-        else:
+
+        if args or kwargs:
             # Dict-style initialization
             self.update(*args, **kwargs)
 
@@ -276,6 +272,7 @@ class HTTPHeaders(object):
         self._as_list.clear()
         self._last_key = None
 
+    @cython.locals(hother = 'HTTPHeaders')
     def update(self, *args, **kwds):
         ''' D.update([E, ]**F) -> None.  Update D from mapping/iterable E and F.
             If E present and has a .keys() method, does:     for k in E: D[k] = E[k]
@@ -288,8 +285,21 @@ class HTTPHeaders(object):
         other = args[0] if len(args) >= 1 else ()
 
         if isinstance(other, HTTPHeaders):
-            self._dict.update(other._dict)
-            self._as_list.update(other._as_list)
+            hother = other
+
+            self._dict.update(hother._dict)
+
+            if PY3:
+                items = hother._as_list.items()
+            else:
+                items = hother._as_list.iteritems()
+
+            nlist = []
+            for key, values in items:
+                l = self._as_list.setdefault(key, nlist)
+                if l is nlist:
+                    nlist = []
+                l.extend(values)
         elif isinstance(other, collections.Mapping):
             for key in other:
                 self[key] = other[key]
