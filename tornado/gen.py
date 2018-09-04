@@ -293,6 +293,10 @@ def _make_coroutine_wrapper(func, replace_callback):
     if hasattr(types, 'coroutine'):
         func = types.coroutine(func)
 
+    stack_context_state = stack_context._state
+    Return_ = Return
+    GeneratorType_ = GeneratorType
+
     @functools.wraps(wrapped)
     def wrapper(*args, **kwargs):
         future = _create_future()
@@ -306,7 +310,7 @@ def _make_coroutine_wrapper(func, replace_callback):
 
         try:
             result = func(*args, **kwargs)
-        except (Return, StopIteration) as e:
+        except (Return_, StopIteration) as e:
             result = _value_from_stopiteration(e)
         except Exception:
             future_set_exc_info(future, sys.exc_info())
@@ -316,22 +320,22 @@ def _make_coroutine_wrapper(func, replace_callback):
                 # Avoid circular references
                 future = None
         else:
-            if isinstance(result, GeneratorType):
+            if isinstance(result, GeneratorType_):
                 # Inline the first iteration of Runner.run.  This lets us
                 # avoid the cost of creating a Runner when the coroutine
                 # never actually yields, which in turn allows us to
                 # use "optional" coroutines in critical path code without
                 # performance penalty for the synchronous case.
                 try:
-                    orig_stack_contexts = stack_context._state.contexts
+                    orig_stack_contexts = stack_context_state.contexts
                     yielded = next(result)
-                    if stack_context._state.contexts is not orig_stack_contexts:
+                    if stack_context_state.contexts is not orig_stack_contexts:
                         yielded = _create_future()
                         yielded.set_exception(
                             stack_context.StackContextInconsistentError(
                                 'stack_context inconsistency (probably caused '
                                 'by yield within a "with StackContext" block)'))
-                except (StopIteration, Return) as e:
+                except (Return_, StopIteration) as e:
                     future_set_result_unless_cancelled(future, _value_from_stopiteration(e))
                 except Exception:
                     future_set_exc_info(future, sys.exc_info())

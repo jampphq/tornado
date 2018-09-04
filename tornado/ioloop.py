@@ -962,7 +962,7 @@ class PollIOLoop(IOLoop):
             signal.signal(signal.SIGALRM,
                           action if action is not None else signal.SIG_DFL)
 
-    @cython.locals(timeout = _Timeout, now = cython.double,
+    @cython.locals(timeout = _Timeout, timeout2 = _Timeout, now = cython.double,
                    timeouts = list, _events = dict, _handlers = dict)
     def start(self):
         if self._running:
@@ -1026,6 +1026,7 @@ class PollIOLoop(IOLoop):
             pop_callback = _callbacks.popleft
             run_callback = self._run_callback
             heappop = heapq.heappop
+            heapify = heapq.heapify
             _time = self.time
 
             while True:
@@ -1040,6 +1041,7 @@ class PollIOLoop(IOLoop):
                 due_timeouts = []
                 if timeouts:
                     now = _time()
+                    needs_heapify = False
 
                     if (self._cancellations > 512 and
                             self._cancellations > (len(timeouts) >> 1)):
@@ -1048,7 +1050,37 @@ class PollIOLoop(IOLoop):
                         self._cancellations = 0
                         self._timeouts = timeouts = [timeout for timeout in timeouts
                                                      if timeout.callback is not None]
-                        heapq.heapify(timeouts)
+                        if len(timeouts) > 1:
+                            needs_heapify = True
+
+                    ntimeouts = len(timeouts)
+                    if ntimeouts > 0:
+                        timeout = timeouts[0]
+                        timeout2 = timeouts[-1]
+                        if timeout.deadline <= now and timeout2.deadline <= now:
+                            # Fast path: Check if all timeouts are due, then we don't need
+                            # to heapify or take them one at a time, we just push them all
+                            # into the due list
+                            ndue_timeouts = 0
+                            for timeout in timeouts:
+                                if timeout.callback is not None and timeout.deadline > now:
+                                    break
+                            else:
+                                # All timeouts are due or cancelled, pop them all at once
+                                for timeout in timeouts:
+                                    if timeout.callback is not None:
+                                        due_timeouts.append(timeout)
+                                del timeouts[:]
+                                needs_heapify = False
+
+                                # Make sure we process timeouts in deadline order
+                                # In-place builtin Tim Sort should be better at this than manual
+                                # heap sort through heapq, so we still win
+                                if len(due_timeouts) > 1:
+                                    due_timeouts.sort()
+
+                    if needs_heapify:
+                        heapify(timeouts)
 
                     while timeouts:
                         timeout = timeouts[0]

@@ -159,6 +159,10 @@ class HTTP1Connection(httputil.HTTPConnection):
     @gen.coroutine
     def _read_message(self, delegate):
         need_delegate_close = False
+        if self.is_client:
+            is_client = True
+        else:
+            is_client = False
         try:
             header_future = self.stream.read_until(
                 b"\r\n\r\n",
@@ -178,7 +182,7 @@ class HTTP1Connection(httputil.HTTPConnection):
                         self.close()
                         raise ReturnFalse
             start_line, headers = self._parse_headers(header_data)
-            if self.is_client:
+            if is_client:
                 start_line = httputil.parse_response_start_line(start_line)
                 self._response_start_line = start_line
             else:
@@ -198,7 +202,7 @@ class HTTP1Connection(httputil.HTTPConnection):
                 need_delegate_close = False
                 raise ReturnFalse
             skip_body = False
-            if self.is_client:
+            if is_client:
                 if (self._request_start_line is not None and
                         self._request_start_line.method == 'HEAD'):
                     skip_body = True
@@ -224,7 +228,7 @@ class HTTP1Connection(httputil.HTTPConnection):
                     self.stream.write(b"HTTP/1.1 100 (Continue)\r\n\r\n")
             if not skip_body:
                 body_future = self._read_body(
-                    start_line.code if self.is_client else 0, headers, delegate)
+                    start_line.code if is_client else 0, headers, delegate)
                 if body_future is not None:
                     if body_future.done():
                         # Check for exeptions
@@ -244,26 +248,28 @@ class HTTP1Connection(httputil.HTTPConnection):
                                 self.stream.close()
                                 raise ReturnFalse
             self._read_finished = True
-            if not self._write_finished or self.is_client:
+            if not self._write_finished or is_client:
                 need_delegate_close = False
                 with _ExceptionLoggingContext(app_log):
                     delegate.finish()
             # If we're waiting for the application to produce an asynchronous
             # response, and we're not detached, register a close callback
             # on the stream (we didn't need one while we were reading)
-            if (not self._finish_future.done() and
-                    self.stream is not None and
-                    not self.stream.closed()):
-                self.stream.set_close_callback(self._on_connection_close)
-                yield self._finish_future
-            if self.is_client and self._disconnect_on_finish:
+            finish_future = self._finish_future
+            if not finish_future.done():
+                stream = self.stream
+                if stream is not None and not stream.closed():
+                    stream.set_close_callback(self._on_connection_close)
+                    stream = None
+                    yield finish_future
+            if is_client and self._disconnect_on_finish:
                 self.close()
             if self.stream is None:
                 raise ReturnFalse
         except httputil.HTTPInputError as e:
             gen_log.info("Malformed HTTP message from %s: %s",
                          self.context, e)
-            if not self.is_client:
+            if not is_client:
                 yield self.stream.write(b'HTTP/1.1 400 Bad Request\r\n\r\n')
             self.close()
             raise ReturnFalse
@@ -271,7 +277,7 @@ class HTTP1Connection(httputil.HTTPConnection):
             if need_delegate_close:
                 with _ExceptionLoggingContext(app_log):
                     delegate.on_connection_close()
-            header_future = None
+            header_future = finish_future = stream = None
             self._clear_callbacks()
         raise ReturnTrue
 

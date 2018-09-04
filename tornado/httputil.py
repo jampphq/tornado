@@ -23,7 +23,7 @@ from __future__ import absolute_import, division, print_function
 
 import calendar
 import collections
-import copy
+from copy import deepcopy
 import datetime
 import email.utils
 import numbers
@@ -90,6 +90,7 @@ except ImportError:
 # terminator and ignore any preceding CR.
 _CRLF_RE = re.compile(r'\r?\n')
 
+__marker = object()
 
 class _NormalizedHeaderCache(dict):
     """Dynamic cached mapping of header names to Http-Header-Case.
@@ -123,7 +124,7 @@ class _NormalizedHeaderCache(dict):
 _normalized_headers = _NormalizedHeaderCache(1000)
 
 
-class HTTPHeaders(collections.MutableMapping):
+class HTTPHeaders(object):
     """A dictionary that maintains ``Http-Header-Case`` for all keys.
 
     Supports multiple values per key via a pair of new methods,
@@ -155,12 +156,8 @@ class HTTPHeaders(collections.MutableMapping):
         self._dict = {}  # type: typing.Dict[str, str]
         self._as_list = {}  # type: typing.Dict[str, typing.List[str]]
         self._last_key = None
-        if (len(args) == 1 and len(kwargs) == 0 and
-                isinstance(args[0], HTTPHeaders)):
-            # Copy constructor
-            for k, v in args[0].get_all():
-                self.add(k, v)
-        else:
+
+        if args or kwargs:
             # Dict-style initialization
             self.update(*args, **kwargs)
 
@@ -171,17 +168,21 @@ class HTTPHeaders(collections.MutableMapping):
         """Adds a new value for the given key."""
         norm_name = _normalized_headers[name]
         self._last_key = norm_name
-        if norm_name in self:
+        if norm_name in self._dict:
             self._dict[norm_name] = (native_str(self[norm_name]) + ',' +
                                      native_str(value))
             self._as_list[norm_name].append(value)
         else:
-            self[norm_name] = value
+            self._dict[norm_name] = value
+            self._as_list[norm_name] = [value]
 
     def get_list(self, name):
         """Returns all values for the given header as a list."""
         norm_name = _normalized_headers[name]
-        return self._as_list.get(norm_name, [])
+        rv = self._as_list.get(norm_name, __marker)
+        if rv is __marker:
+            rv = []
+        return rv
 
     def get_all(self):
         # type: () -> typing.Iterable[typing.Tuple[str, str]]
@@ -190,7 +191,11 @@ class HTTPHeaders(collections.MutableMapping):
         If a header has multiple values, multiple pairs will be
         returned with the same name.
         """
-        for name, values in self._as_list.items():
+        if PY3:
+            items = self._as_list.items()
+        else:
+            items = self._as_list.iteritems()
+        for name, values in items:
             for value in values:
                 yield (name, value)
 
@@ -216,8 +221,8 @@ class HTTPHeaders(collections.MutableMapping):
                 raise HTTPInputError("no colon in header line")
             self.add(name, value.strip())
 
-    @classmethod
-    def parse(cls, headers):
+    @staticmethod
+    def parse(headers):
         """Returns a dictionary from HTTP header text.
 
         >>> h = HTTPHeaders.parse("Content-Type: text/html\\r\\nContent-Length: 42\\r\\n")
@@ -230,13 +235,148 @@ class HTTPHeaders(collections.MutableMapping):
            mix of `KeyError`, and `ValueError`.
 
         """
-        h = cls()
+        h = HTTPHeaders()
         for line in headers.splitlines():
             if line:
                 h.parse_line(line)
         return h
 
-    # MutableMapping abstract method implementations.
+    def pop(self, key, default=__marker):
+        '''D.pop(k[,d]) -> v, remove specified key and return the corresponding value.
+          If key is not found, d is returned if given, otherwise KeyError is raised.
+        '''
+        try:
+            value = self._dict[_normalized_headers[key]]
+        except KeyError:
+            if default is __marker:
+                raise
+            return default
+        else:
+            del self[key]
+            return value
+
+    def popitem(self):
+        '''D.popitem() -> (k, v), remove and return some (key, value) pair
+           as a 2-tuple; but raise KeyError if D is empty.
+        '''
+        try:
+            key = next(iter(self._dict))
+        except StopIteration:
+            raise KeyError
+        value = self.pop(key)
+        return key, value
+
+    def clear(self):
+        'D.clear() -> None.  Remove all items from D.'
+        self._dict.clear()
+        self._as_list.clear()
+        self._last_key = None
+
+    @cython.locals(hother = 'HTTPHeaders')
+    def update(self, *args, **kwds):
+        ''' D.update([E, ]**F) -> None.  Update D from mapping/iterable E and F.
+            If E present and has a .keys() method, does:     for k in E: D[k] = E[k]
+            If E present and lacks .keys() method, does:     for (k, v) in E: D[k] = v
+            In either case, this is followed by: for k, v in F.items(): D[k] = v
+        '''
+        if len(args) > 1:
+            raise TypeError("update() takes at most 2 positional "
+                            "arguments ({} given)".format(len(args)+1))
+        other = args[0] if len(args) >= 1 else ()
+
+        if isinstance(other, HTTPHeaders):
+            hother = other
+
+            self._dict.update(hother._dict)
+
+            if PY3:
+                items = hother._as_list.items()
+            else:
+                items = hother._as_list.iteritems()
+
+            nlist = []
+            for key, values in items:
+                l = self._as_list.setdefault(key, nlist)
+                if l is nlist:
+                    nlist = []
+                l.extend(values)
+        elif isinstance(other, collections.Mapping):
+            for key in other:
+                self[key] = other[key]
+        elif hasattr(other, "iteritems"):
+            for key, value in other.iteritems():
+                self[key] = value
+        elif hasattr(other, "keys"):
+            for key in other.keys():
+                self[key] = other[key]
+        else:
+            for key, value in other:
+                self[key] = value
+        if PY3:
+            for key, value in kwds.items():
+                self[key] = value
+        else:
+            for key, value in kwds.iteritems():
+                self[key] = value
+
+    def setdefault(self, key, default=None):
+        'D.setdefault(k[,d]) -> D.get(k,d), also set D[k]=d if k not in D'
+        key = _normalized_headers[key]
+        rv = self._dict.get(key, __marker)
+        if rv is __marker:
+            rv = self._dict.setdefault(key, default)
+            if rv is default:
+                self._as_list[key] = [default]
+        return rv
+
+    def get(self, key, default=None):
+        return self._dict.get(_normalized_headers[key], default)
+
+    def __contains__(self, key):
+        return _normalized_headers[key] in self._dict
+
+    def iterkeys(self):
+        'D.iterkeys() -> an iterator over the keys of D'
+        if PY3:
+            return self._dict.keys()
+        else:
+            return self._dict.iterkeys()
+
+    def itervalues(self):
+        'D.itervalues() -> an iterator over the values of D'
+        if PY3:
+            return self._dict.values()
+        else:
+            return self._dict.itervalues()
+
+    def iteritems(self):
+        'D.iteritems() -> an iterator over the (key, value) items of D'
+        if PY3:
+            return self._dict.items()
+        else:
+            return self._dict.iteritems()
+
+    def keys(self):
+        "D.keys() -> list of D's keys"
+        return self._dict.keys()
+
+    def items(self):
+        "D.items() -> list of D's (key, value) pairs, as 2-tuples"
+        return self._dict.items()
+
+    def values(self):
+        "D.values() -> list of D's values"
+        return self._dict.values()
+
+    __hash__ = None
+
+    def __eq__(self, other):
+        if not isinstance(other, collections.Mapping):
+            return NotImplemented
+        return dict(self.items()) == dict(other.items())
+
+    def __ne__(self, other):
+        return not (self == other)
 
     def __setitem__(self, name, value):
         norm_name = _normalized_headers[name]
@@ -275,6 +415,7 @@ class HTTPHeaders(collections.MutableMapping):
 
     __unicode__ = __str__
 
+collections.MutableMapping.register(HTTPHeaders)
 
 class HTTPServerRequest(object):
     """A single HTTP request.
@@ -376,7 +517,7 @@ class HTTPServerRequest(object):
         self.method = method
         self.uri = uri
         self.version = version
-        self.headers = headers or HTTPHeaders()
+        self.headers = _headers = headers or HTTPHeaders()
         self.body = body or b""
 
         # set remote IP and protocol
@@ -384,17 +525,18 @@ class HTTPServerRequest(object):
         self.remote_ip = getattr(context, 'remote_ip', None)
         self.protocol = getattr(context, 'protocol', "http")
 
-        self.host = host or self.headers.get("Host") or "127.0.0.1"
-        self.host_name = split_host_and_port(self.host.lower())[0]
+        self.host = _host = host or _headers.get("Host") or "127.0.0.1"
+        self.host_name = split_host_and_port(_host.lower())[0]
         self.files = files or {}
         self.connection = connection
         self.server_connection = server_connection
         self._start_time = time.time()
         self._finish_time = None
 
-        self.path, sep, self.query = uri.partition('?')
-        self.arguments = parse_qs_bytes(self.query, keep_blank_values=True)
-        self.query_arguments = copy.deepcopy(self.arguments)
+        self.path, sep, query = uri.partition('?')
+        self.query = query
+        self.arguments = arguments = parse_qs_bytes(query, keep_blank_values=True)
+        self.query_arguments = deepcopy(arguments)
         self.body_arguments = {}
 
     def supports_http_1_1(self):
@@ -787,14 +929,21 @@ def parse_body_arguments(content_type, body, arguments, files, headers=None):
         except Exception as e:
             gen_log.warning('Invalid x-www-form-urlencoded body: %s', e)
             uri_arguments = {}
+        nlist = []
         if PY3:
             for name, values in uri_arguments.items():
                 if values:
-                    arguments.setdefault(name, []).extend(values)
+                    l = arguments.setdefault(name, nlist)
+                    if l is nlist:
+                        nlist = []
+                    l.extend(values)
         else:
             for name, values in uri_arguments.iteritems():
                 if values:
-                    arguments.setdefault(name, []).extend(values)
+                    l = arguments.setdefault(name, nlist)
+                    if l is nlist:
+                        nlist = []
+                    l.extend(values)
     elif content_type.startswith("multipart/form-data"):
         try:
             fields = content_type.split(";")
@@ -884,6 +1033,7 @@ def format_timestamp(ts):
 RequestStartLine = collections.namedtuple(
     'RequestStartLine', ['method', 'path', 'version'])
 
+_VERSION_RE = re.compile(r"^HTTP/1\.[0-9]$")
 
 def parse_request_start_line(line):
     """Returns a (method, path, version) tuple for an HTTP 1.x request line.
@@ -899,7 +1049,7 @@ def parse_request_start_line(line):
         # https://tools.ietf.org/html/rfc7230#section-3.1.1
         # invalid request-line SHOULD respond with a 400 (Bad Request)
         raise HTTPInputError("Malformed HTTP request line")
-    if not re.match(r"^HTTP/1\.[0-9]$", version):
+    if version not in ("HTTP/1.1", "HTTP/1.0") and not _VERSION_RE.match(version):
         raise HTTPInputError(
             "Malformed HTTP version in HTTP Request-Line: %r" % version)
     return RequestStartLine(method, path, version)
@@ -907,6 +1057,8 @@ def parse_request_start_line(line):
 
 ResponseStartLine = collections.namedtuple(
     'ResponseStartLine', ['version', 'code', 'reason'])
+
+_RESPONSE_LINE_RE = re.compile("(HTTP/1.[0-9]) ([0-9]+) ([^\r]*)")
 
 
 def parse_response_start_line(line):
@@ -918,11 +1070,11 @@ def parse_response_start_line(line):
     ResponseStartLine(version='HTTP/1.1', code=200, reason='OK')
     """
     line = native_str(line)
-    match = re.match("(HTTP/1.[0-9]) ([0-9]+) ([^\r]*)", line)
+    match = _RESPONSE_LINE_RE.match(line)
     if not match:
         raise HTTPInputError("Error parsing response start line")
-    return ResponseStartLine(match.group(1), int(match.group(2)),
-                             match.group(3))
+    version, code, reason = match.groups()
+    return ResponseStartLine(version, int(code), reason)
 
 # _parseparam and _parse_header are copied and modified from python2.7's cgi.py
 # The original 2.7 version of this code did not correctly support some
@@ -1026,14 +1178,14 @@ def split_host_and_port(netloc):
 
     .. versionadded:: 4.1
     """
-    match = re.match(r'^(.+):(\d+)$', netloc)
-    if match:
-        host = match.group(1)
-        port = int(match.group(2))
-    else:
-        host = netloc
-        port = None
-    return (host, port)
+    if ':' not in netloc:
+        return (netloc, None)
+
+    try:
+        host, port = netloc.rsplit(':', 1)
+        return (host, int(port))
+    except:
+        return (netloc, None)
 
 
 def qs_to_qsl(qs):
