@@ -46,6 +46,12 @@ else:
     from urllib import urlencode
     from urlparse import urlparse, urlunparse, parse_qsl
 
+try:
+    # ABCs live in "collections.abc" in Python >= 3.3
+    from collections.abc import MutableMapping
+except ImportError:
+    # fall back to import from "collections"
+    from collections import MutableMapping
 
 try:
     import cython
@@ -123,7 +129,7 @@ class _NormalizedHeaderCache(dict):
 _normalized_headers = _NormalizedHeaderCache(1000)
 
 
-class HTTPHeaders(collections.MutableMapping):
+class HTTPHeaders(MutableMapping):
     """A dictionary that maintains ``Http-Header-Case`` for all keys.
 
     Supports multiple values per key via a pair of new methods,

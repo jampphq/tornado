@@ -2282,7 +2282,7 @@ class HTTPError(Exception):
     def __init__(self, status_code=500, log_message=None, *args, **kwargs):
         self.status_code = status_code
         self.log_message = log_message
-        self.args = args
+        self.args = (status_code, log_message) + args
         self.reason = kwargs.get('reason', None)
         if log_message and not args:
             self.log_message = log_message.replace('%', '%%')
