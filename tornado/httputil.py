@@ -46,6 +46,12 @@ else:
     from urllib import urlencode
     from urlparse import urlparse, urlunparse, parse_qsl
 
+try:
+    # ABCs live in "collections.abc" in Python >= 3.3
+    from collections.abc import MutableMapping
+except ImportError:
+    # fall back to import from "collections"
+    from collections import MutableMapping
 
 try:
     import cython
@@ -415,7 +421,7 @@ class HTTPHeaders(object):
 
     __unicode__ = __str__
 
-collections.MutableMapping.register(HTTPHeaders)
+MutableMapping.register(HTTPHeaders)
 
 class HTTPServerRequest(object):
     """A single HTTP request.
